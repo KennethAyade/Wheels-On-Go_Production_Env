@@ -18,6 +18,147 @@ This file tracks repository changes over time. Add a new entry for each meaningf
 
 ---
 
+## 2026-02-21 12:00 PHT
+Summary: Phase 3 Week 7 — Admin web dashboard complete. Vite + React + Tailwind web app (`apps/web`) added to monorepo. Admin email/password auth, driver verification UI, bookings table, dashboard stats. 122 backend tests still passing.
+Changes:
+- apps/api/prisma/schema.prisma: Added `passwordHash String?` to User model for admin email/password login
+- apps/api/prisma/migrations/20260221120000_add_admin_password_hash/migration.sql: NEW — `ALTER TABLE "User" ADD COLUMN "passwordHash" TEXT`
+- apps/api/src/auth/dto/admin-login.dto.ts: NEW — AdminLoginDto with @IsEmail() + @IsString() @MinLength(8)
+- apps/api/src/auth/auth.service.ts: Added adminLogin() — finds ADMIN user by email, bcrypt.compare(), reuses buildAccessToken/buildRefreshToken, audit logs ADMIN_LOGIN
+- apps/api/src/auth/auth.controller.ts: Added POST /auth/admin/login with @Throttle({ default: { limit: 5, ttl: 60 } })
+- apps/api/prisma/seed-admin.ts: NEW — seeds admin user (admin@wheelsongo.com / Admin123! / role ADMIN) via prisma.user.upsert
+- apps/api/package.json: Added "seed:admin" script
+- apps/api/src/driver/dto/admin-driver-list.dto.ts: NEW — AdminDriverListQueryDto (status, search, page, limit)
+- apps/api/src/driver/driver.service.ts: Added listAllDrivers(query), getDriverDetailForAdmin(driverId), enrichDocumentsWithUrls(); enhanced listPendingDrivers() with presigned download URLs
+- apps/api/src/driver/admin-driver.controller.ts: Added GET /admin/drivers (all, paginated, filterable) + GET /admin/drivers/:driverId; kept existing pending/approve/reject
+- apps/api/src/admin/admin-stats.controller.ts: NEW — GET /admin/stats (activeRides, onlineDrivers, totalRiders, pendingVerifications, todayRevenue via Promise.all)
+- apps/api/src/admin/dto/admin-bookings-query.dto.ts: NEW — AdminBookingsQueryDto (status, dateFrom, dateTo, fareMin, fareMax, search, page, limit)
+- apps/api/src/admin/admin-bookings.controller.ts: NEW — GET /admin/bookings with pagination, filters, rider/driver relations
+- apps/api/src/admin/admin.module.ts: NEW — AdminModule registering stats + bookings controllers, imports PrismaModule
+- apps/api/src/app.module.ts: Registered AdminModule
+- apps/web/: NEW — Complete Vite + React + TypeScript + Tailwind CSS 4 web admin app
+- apps/web/src/api/client.ts: Axios instance with JWT interceptors (auto-refresh on 401, redirect on failure)
+- apps/web/src/api/{auth,drivers,bookings,dashboard}.ts: API layer for all admin endpoints
+- apps/web/src/context/AuthContext.tsx: AuthProvider (JWT localStorage, login/logout, ADMIN role guard on init)
+- apps/web/src/components/{Sidebar,TopBar,Layout,ProtectedRoute,StatusBadge}.tsx: Layout shell matching Figma wireframes
+- apps/web/src/pages/LoginPage.tsx: Email + password form on emerald-700 green background
+- apps/web/src/pages/DashboardPage.tsx: Stat cards grid fetching GET /admin/stats
+- apps/web/src/pages/DriversPage.tsx: Applicants accordion (status mapping: For Admin Approval / Uploading Documents / Lacking Documents / Denied) + Registered section
+- apps/web/src/pages/DriverDetailPage.tsx: Document gallery with presigned image viewer modal (zoom), approve/reject with reason dialog
+- apps/web/src/pages/BookingsPage.tsx: Paginated table with status/date filters, search, color-coded status badges
+- package.json (root): Added apps/web to workspaces; added dev:web + build:web scripts
+- Tests: 122 backend tests (13 suites) passing unchanged
+Details: `changes/2026-02-21-1200-pht.md`
+
+## 2026-02-20 20:00 PHT
+Summary: Week 5 (Tracking & Navigation) — TrackingSocketClient, driver real-time location broadcast, full rider ActiveRideScreen (live driver marker + route polyline), ETA dual-strategy (Haversine + Directions API), geofence events, turn-by-turn navigation, backend RideRoute storage, actual ride data calculation on COMPLETED. Dispatch fixes: normalized accepted payload, 30s selected-driver timeout, EXPIRED handling.
+Changes:
+- apps/mobile/.../data/websocket/TrackingSocketClient.kt: NEW — Socket.IO client for /tracking namespace; broadcasts LOCATION_UPDATE every 3s; receives APPROACHING_PICKUP, ARRIVED_AT_PICKUP, APPROACHING_DROPOFF, ARRIVED_AT_DROPOFF geofence events
+- apps/mobile/.../ui/screens/driver/DriverActiveRideViewModel.kt: Added TrackingSocketClient; broadcasts driver location every 3s during active ride via LocationService
+- apps/mobile/.../ui/screens/ride/ActiveRideScreen.kt: REWRITTEN — full-screen GoogleMapView with live driver Marker, route PolylineOptions, overlay cards (status, ETA, pickup/dropoff addresses, geofence message banner)
+- apps/mobile/.../ui/screens/ride/ActiveRideViewModel.kt: Upgraded to AndroidViewModel; added TrackingSocketClient for geofence events; dual ETA (Haversine instant + Directions API every 30s); geofence message → user-facing string mapping
+- apps/mobile/.../data/network/DirectionsApi.kt: Added DirectionsLeg + DirectionsValue models for ETA parsing
+- apps/mobile/.../ui/screens/driver/DriverActiveRideScreen.kt: Added "Navigate" FAB — launches Google Maps turn-by-turn intent; browser deeplink fallback
+- apps/api/src/dispatch/dispatch.service.ts: Added storeRideRoute() — calls Google Directions API on ride acceptance, stores encoded polyline in RideRoute table
+- apps/api/src/rides/ride.service.ts: On COMPLETED, sums Haversine distances across DriverLocationHistory GPS trail for actual distance/duration/fare; falls back to estimated values
+- apps/api/src/dispatch/dispatch.gateway.ts: Normalized dispatch:accepted payload (rideId, driverId, full ride data); added 30s timeout for SELECTED state → auto-decline + re-dispatch; emits EXPIRED to driver on timeout
+- apps/api/src/tracking/tracking.gateway.ts: Receives LOCATION_UPDATE from driver; emits to rider room; triggers geofence checks (200m APPROACHING, 50m ARRIVED) for pickup and dropoff
+- Tests: 122 backend tests (13 suites) passing; APK BUILD SUCCESSFUL
+Details: `changes/2026-02-20-2000-pht.md`
+
+## 2026-02-20 14:00 PHT
+Summary: Week 5 driver-side booking flow complete — DriveRequestsScreen, DriverActiveRideScreen overhaul, DriverTripCompletionScreen, dispatch payload normalization, DispatchSocketClient nested-JSON fix; two bug fixes (activeRideId navigation loop, fare format ₱1500.0→₱1500); deprecated icon warning cleanup.
+Changes:
+- apps/mobile/.../ui/screens/driver/DriveRequestsScreen.kt: NEW — waiting spinner, ride-request cards (rider name, fare, pickup/dropoff, distance-to-pickup, walk time, payment method), Apply/Dismiss buttons, CurrentLocationBar
+- apps/mobile/.../ui/screens/driver/DriverActiveRideScreen.kt: OVERHAULED — map-centered layout with route polyline, status banner (en-route/arrived/riding), I've Arrived/Start Ride/Complete Ride CTAs, message stub; Icons.Default.Chat → Icons.AutoMirrored.Filled.Chat
+- apps/mobile/.../ui/screens/driver/DriverActiveRideViewModel.kt: NEW — ride fetch, status progression (PENDING→ARRIVED_AT_PICKUP→IN_PROGRESS→COMPLETED), continuous location-tracking loop, REST calls (arriveAtPickup, startRide, completeRide)
+- apps/mobile/.../ui/screens/driver/DriverTripCompletionScreen.kt: NEW — post-trip summary (route, duration/distance banner, rider avatar, fare, payment method, Go to Home CTA); unused imports removed; Icons.AutoMirrored fix applied
+- apps/mobile/.../ui/screens/driver/DriverTripCompletionViewModel.kt: NEW — loads ride details via RideRepository.getRideById
+- apps/mobile/.../ui/screens/driver/DriverHomeScreen.kt: BUG FIX — call viewModel.clearActiveRideState() in LaunchedEffect(activeRideId) before navigating to prevent re-navigation loop after trip completion
+- apps/mobile/.../ui/screens/driver/DriverHomeViewModel.kt: Added clearActiveRideState() method; fixed fare format (%.0f.format) so ₱1500.0 → ₱1500
+- apps/mobile/app/src/main/java/com/wheelsongo/app/AppNav.kt: Added DriverTripCompletion route; get shared DriverHomeViewModel from Home back-stack entry; call clearActiveRideState() on Go to Home; removed unused backStackEntry param in Home composable
+- apps/api/src/dispatch/dispatch.gateway.ts: Added fetchFullRide() + buildRideData() to normalize dispatch payload (riderName, pickupLat/Lng, estimatedFare, estimatedDistance, estimatedDuration, paymentMethod, rideType); applied to initiateDispatch, handleDispatchDecline, handleConnection, notifySelectedDriver paths
+- apps/mobile/.../data/network/DispatchSocketClient.kt: Fixed nested-JSON parsing — reads ride fields from event.ride object instead of flat top-level keys
+- Tests: 122 backend tests (13 suites) passing — 1 new test vs previous 121
+Details: `changes/2026-02-20-1400-pht.md`
+
+## 2026-02-17 13:00 PHT
+Summary: Firebase App Check integration to fix "missing valid app identifier" error; resend OTP device-aware fix; vehicle 409 idempotency fix with error parsing and lifecycle refresh.
+Changes:
+- apps/mobile/app/build.gradle.kts: Added firebase-appcheck-debug:19.0.2 and firebase-appcheck-playintegrity:19.0.2 dependencies
+- apps/mobile/.../WheelsOnGoApplication.kt: Initialize Firebase App Check — DebugAppCheckProviderFactory for debug builds, PlayIntegrityAppCheckProviderFactory for release
+- apps/mobile/.../data/auth/FirebasePhoneAuthHelper.kt: Increased timeout 60s→120s; added RateLimited and RecaptchaRequired sealed result types; onVerificationFailed now detects FirebaseTooManyRequestsException vs FirebaseAuthInvalidCredentialsException
+- apps/mobile/.../ui/screens/auth/PhoneInputViewModel.kt: Handle RateLimited and RecaptchaRequired result types with user-friendly messages
+- apps/mobile/.../ui/screens/auth/OtpVerificationViewModel.kt: Handle RateLimited and RecaptchaRequired result types; resendOtp now device-aware (Firebase on real phones, backend on emulators)
+- apps/mobile/.../ui/screens/auth/OtpVerificationScreen.kt: resend button passes activity and verificationId to resendOtp()
+- apps/api/src/rider-vehicle/rider-vehicle.service.ts: Idempotent vehicle creation — returns existing vehicle if same rider, throws ConflictException only if different rider owns the plate
+- apps/api/test/rider-vehicle.service.spec.ts: Added idempotency test and updated conflict test
+- apps/mobile/.../data/models/ErrorResponse.kt: NEW — Moshi model for NestJS error response body
+- apps/mobile/.../data/repository/VehicleRepository.kt: Added Moshi error body parsing (parseErrorMessage) across all 4 methods
+- apps/mobile/.../ui/screens/vehicle/VehicleListScreen.kt: Added DisposableEffect lifecycle observer to auto-refresh on ON_RESUME
+- apps/mobile/.../ui/screens/booking/BookingConfirmScreen.kt: Added DisposableEffect lifecycle observer to auto-refresh vehicles on ON_RESUME
+- apps/mobile/.../ui/screens/booking/BookingConfirmViewModel.kt: Changed fetchVehicles() from private to public
+- Firebase Console: SHA-256 fingerprint added (C1:5D:...), test phone +639761337834 whitelisted (code 123456), App Check debug token registered
+- Tests: 121 backend tests (13 suites) passing
+Details: `changes/2026-02-17-1300-pht.md`
+
+## 2026-02-14 10:00 PHT
+Summary: Phase 2 Week 4 — Core Booking Engine complete. RiderVehicle CRUD, surge pricing, promo codes, dispatch integration, mobile booking flow (BookingConfirm + ActiveRide), and 5 new mobile test files.
+Changes:
+- apps/api/src/rider-vehicle/*: NEW module — RiderVehicle CRUD (create, list, delete, set-default) with 10 unit tests
+- apps/api/src/pricing/surge-pricing.service.ts: Haversine-based demand/supply surge (1.0x–2.0x, 5 tiers)
+- apps/api/src/pricing/promo-code.service.ts: PERCENTAGE + FIXED_AMOUNT promo validation with expiry and usage limits
+- apps/api/src/rides/rides.service.ts: Ride creation triggers WebSocket dispatch event
+- apps/api/src/rides/rides.controller.ts: POST /rides creates ride with fare estimate, surge, promo
+- apps/api/src/dispatch/dispatch.service.ts: WebSocket-based driver dispatch on ride creation
+- apps/mobile/.../data/models/booking/BookingModels.kt: NEW — FareEstimate, RideRequest, RideResponse, PromoCode models
+- apps/mobile/.../data/models/vehicle/VehicleModels.kt: NEW — RiderVehicle, CreateVehicleRequest models
+- apps/mobile/.../data/network/RidesApi.kt: NEW — Retrofit interface for rides endpoints
+- apps/mobile/.../data/network/VehicleApi.kt: NEW — Retrofit interface for vehicle endpoints
+- apps/mobile/.../data/repository/RidesRepository.kt: NEW — ride creation, fare estimate, promo validation
+- apps/mobile/.../data/repository/VehicleRepository.kt: NEW — CRUD for rider vehicles
+- apps/mobile/.../data/websocket/RideWebSocketClient.kt: NEW — Socket.IO client for real-time ride events
+- apps/mobile/.../ui/screens/vehicle/VehicleRegistrationScreen.kt: NEW — plate, make, model, color form
+- apps/mobile/.../ui/screens/vehicle/VehicleListScreen.kt: NEW — list with delete and set-default actions
+- apps/mobile/.../ui/screens/booking/BookingConfirmScreen.kt: NEW — fare estimate, vehicle selector, promo code input, confirm button
+- apps/mobile/.../ui/screens/booking/BookingConfirmViewModel.kt: NEW — fare estimate fetch, promo validation, vehicle loading
+- apps/mobile/.../ui/screens/ride/ActiveRideScreen.kt: NEW — real-time map tracking, driver ETA, cancel button
+- apps/mobile/.../ui/screens/ride/ActiveRideViewModel.kt: NEW — WebSocket event handling (driver_assigned, ride_started, ride_completed)
+- apps/mobile/.../AppNav.kt: Added BookingConfirm → ActiveRide navigation; VehicleRegistration from drawer
+- apps/mobile/.../data/network/ApiClient.kt: Added ridesApi, vehicleApi
+- apps/mobile/test/*: 5 new test files (BookingConfirmViewModelTest, ActiveRideViewModelTest, RidesRepositoryTest, VehicleRepositoryTest, VehicleRegistrationViewModelTest) — 27 tests
+- Tests: 121 backend tests (13 suites) passing; mobile tests compile but blocked by JBR-21 JVM crash
+Details: `changes/2026-02-14-1000-pht.md`
+
+## 2026-02-13 12:00 PHT
+Summary: Firebase Phone Auth integration for real phone OTP delivery. Emulators use backend console SMS, real phones use Firebase SDK. Free tier: 10K verifications/month.
+Changes:
+- apps/api/src/auth/firebase.service.ts: NEW — Firebase Admin SDK service for verifying Firebase ID tokens
+- apps/api/src/auth/dto/verify-firebase.dto.ts: NEW — DTO for Firebase token verification
+- apps/api/src/auth/auth.service.ts: Added verifyFirebaseToken() method, refactored buildLoginResponse() to avoid duplication
+- apps/api/src/auth/auth.controller.ts: Added POST /auth/verify-firebase endpoint
+- apps/api/src/auth/auth.module.ts: Added FirebaseService to providers
+- apps/api/.env: Added FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY
+- apps/api/.env.example: Documented Firebase env vars
+- apps/api/test/firebase.service.spec.ts: NEW — 5 tests for Firebase service
+- apps/api/test/auth.service.spec.ts: Added 5 tests for Firebase auth flow
+- apps/api/package.json: Added firebase-admin dependency
+- apps/mobile/build.gradle.kts: Added google-services plugin
+- apps/mobile/app/build.gradle.kts: Added Firebase BOM and firebase-auth dependencies
+- apps/mobile/app/google-services.json: NEW — Firebase config (in .gitignore)
+- apps/mobile/.../data/auth/FirebasePhoneAuthHelper.kt: NEW — Firebase Phone Auth wrapper with suspendable methods
+- apps/mobile/.../data/models/auth/AuthModels.kt: Added VerifyFirebaseRequest model
+- apps/mobile/.../data/network/ApiClient.kt: Added verifyFirebase endpoint
+- apps/mobile/.../data/repository/AuthRepository.kt: Added verifyFirebaseToken() method
+- apps/mobile/.../ui/screens/auth/PhoneInputViewModel.kt: Rewritten with conditional Firebase/backend flow based on DeviceUtils.isEmulator()
+- apps/mobile/.../ui/screens/auth/PhoneInputScreen.kt: Updated onNext callback to pass verificationId
+- apps/mobile/.../ui/screens/auth/OtpVerificationViewModel.kt: Rewritten with conditional Firebase/backend verify
+- apps/mobile/.../ui/screens/auth/OtpVerificationScreen.kt: Added verificationId parameter
+- apps/mobile/.../ui/navigation/Routes.kt: Updated OTP route to include optional verificationId query param
+- apps/mobile/.../AppNav.kt: Updated navigation to handle Firebase auto-verify (skip OTP screen)
+- .gitignore: Added apps/mobile/app/google-services.json
+- Tests: 101 backend tests (11 suites), 60 mobile tests (7 files) — all passing
+
 ## 2026-02-07 20:00 PHT
 Summary: Fix KYC upload persistence — DocumentUploadViewModel now fetches existing KYC status on init; backend GET /drivers/kyc returns proper { documents, allUploaded, allVerified } response.
 Changes:

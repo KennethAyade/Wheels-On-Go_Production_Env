@@ -3,7 +3,7 @@ services:
     name: wheels-on-go-api
     env: node
     plan: starter
-    buildCommand: npm install --production=false && npm run prisma:generate && npm run build:prod
+    buildCommand: npm install --production=false && npm run prisma:generate && npm run prisma:migrate && npm run seed:admin && npm run build:prod
     startCommand: npm run start:prod
     autoDeploy: true
     envVars:
@@ -35,6 +35,12 @@ services:
         sync: false
       - key: TWILIO_FROM_NUMBER
         sync: false
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_CLIENT_EMAIL
+        sync: false
+      - key: FIREBASE_PRIVATE_KEY
+        sync: false
       - key: STORAGE_BUCKET
         sync: false
       - key: STORAGE_REGION
@@ -50,6 +56,12 @@ services:
       - key: AWS_ACCESS_KEY_ID
         sync: false
       - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: FATIGUE_MODE
+        value: live
+      - key: GEMINI_API_KEY
         sync: false
       - key: PORT
         value: 3000

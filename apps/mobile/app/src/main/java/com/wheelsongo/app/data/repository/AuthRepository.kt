@@ -10,10 +10,12 @@ import com.wheelsongo.app.data.models.auth.RefreshTokenRequest
 import com.wheelsongo.app.data.models.auth.RefreshTokenResponse
 import com.wheelsongo.app.data.models.auth.RequestOtpRequest
 import com.wheelsongo.app.data.models.auth.RequestOtpResponse
+import com.wheelsongo.app.data.models.auth.VerifyFirebaseRequest
 import com.wheelsongo.app.data.models.auth.VerifyOtpRequest
 import com.wheelsongo.app.data.models.auth.VerifyOtpResponse
 import com.wheelsongo.app.data.network.ApiClient
 import com.wheelsongo.app.data.network.AuthApi
+import com.wheelsongo.app.utils.DeviceUtils
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.flow.Flow
@@ -43,7 +45,11 @@ class AuthRepository(
     suspend fun requestOtp(phoneNumber: String, role: String): Result<RequestOtpResponse> {
         return try {
             val response = authApi.requestOtp(
-                RequestOtpRequest(phoneNumber = phoneNumber, role = role)
+                RequestOtpRequest(
+                    phoneNumber = phoneNumber,
+                    role = role,
+                    debugMode = if (DeviceUtils.isEmulator()) true else null
+                )
             )
 
             if (response.isSuccessful && response.body() != null) {
@@ -83,11 +89,9 @@ class AuthRepository(
 
             if (response.isSuccessful && response.body() != null) {
                 val body = response.body()!!
-                // Save tokens to secure storage (only if accessToken is present)
-                // Drivers requiring biometric auth will have null accessToken
-                if (body.accessToken != null) {
-                    tokenManager.saveTokens(body)
-                }
+                // Save user info and tokens to secure storage
+                // saveTokens() handles null accessToken/refreshToken gracefully via ?.let
+                tokenManager.saveTokens(body)
                 // Save biometric token for drivers requiring face verification
                 if (body.biometricRequired == true && body.biometricToken != null) {
                     tokenManager.saveBiometricToken(body.biometricToken)
@@ -98,6 +102,47 @@ class AuthRepository(
                 Result.failure(Exception(error.message))
             }
         } catch (e: Exception) {
+            Result.failure(Exception("Network error: ${e.message ?: "Unable to connect to server"}"))
+        }
+    }
+
+    /**
+     * Verify a Firebase Phone Auth ID token with the backend.
+     * Used on real phones where Firebase handles SMS OTP delivery + verification.
+     *
+     * On success, tokens are automatically saved to TokenManager.
+     * Returns the same response shape as verifyOtp.
+     */
+    suspend fun verifyFirebaseToken(
+        firebaseIdToken: String,
+        role: String
+    ): Result<VerifyOtpResponse> {
+        return try {
+            android.util.Log.d("AuthRepository", "Calling /auth/verify-firebase with 60s timeout")
+
+            // Use firebaseAuthApi with 60s timeout to handle Render cold start
+            val response = ApiClient.firebaseAuthApi.verifyFirebase(
+                VerifyFirebaseRequest(
+                    firebaseIdToken = firebaseIdToken,
+                    role = role
+                )
+            )
+
+            if (response.isSuccessful && response.body() != null) {
+                android.util.Log.d("AuthRepository", "Firebase verification succeeded")
+                val body = response.body()!!
+                tokenManager.saveTokens(body)
+                if (body.biometricRequired == true && body.biometricToken != null) {
+                    tokenManager.saveBiometricToken(body.biometricToken)
+                }
+                Result.success(body)
+            } else {
+                android.util.Log.e("AuthRepository", "Firebase verification failed: ${response.code()}")
+                val error = parseError(response)
+                Result.failure(Exception(error.message))
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("AuthRepository", "Firebase verification error", e)
             Result.failure(Exception("Network error: ${e.message ?: "Unable to connect to server"}"))
         }
     }

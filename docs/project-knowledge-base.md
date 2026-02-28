@@ -1,14 +1,14 @@
 # Wheels On Go Platform - Complete Knowledge Base
 
 **Repository:** `d:\FREELANCE\Wheels-On-Go_Platform\Wheels_On_Go`
-**Last Updated:** 2026-02-07
+**Last Updated:** 2026-02-21
 **Branch:** develop (main branch: main)
 
 ---
 
 ## Executive Summary
 
-**Wheels On Go** (also branded as "Valet&Go") is a ride-hailing platform built with NestJS + Prisma/PostgreSQL (backend) and Kotlin + Jetpack Compose (mobile). **Phase 1** is complete: OTP authentication, driver KYC document upload (Cloudflare R2), biometric face verification, session resume, and hamburger menu drawer are fully implemented end-to-end. The complete database schema for Phases 2-7 (40+ models) is ready but not yet implemented.
+**Wheels On Go** (also branded as "Valet&Go") is a ride-hailing platform built with NestJS + Prisma/PostgreSQL (backend), Kotlin + Jetpack Compose (mobile), and React + Vite + Tailwind CSS (web admin). **Phase 1 is complete**, **Phase 2 (Weeks 4–5) is complete**, and **Phase 3 Week 7 (Admin Dashboard) is complete**: Firebase Phone Auth, driver KYC (Cloudflare R2), biometric login, RiderVehicle CRUD, surge pricing, promo codes, WebSocket dispatch, real-time tracking with geofencing, actual fare calculation, full driver booking flow, and the admin web dashboard are all implemented end-to-end. 122 backend tests pass across 13 suites. The complete database schema for remaining phases (40+ models) is ready.
 
 ---
 
@@ -19,16 +19,19 @@
 | 2026-01-19 | Initial monorepo scaffold | ✅ Complete |
 | 2026-01-28 | Complete database schema (40+ models) | ✅ Complete |
 | 2026-01-29 | Data privacy setup (encryption, audit) | ✅ Complete |
-| 2026-01-31 | Free maps migration (OSMDroid + Nominatim) | ✅ Replaced |
+| 2026-01-31 | Free maps migration (OSMDroid + Nominatim) | ✅ Replaced by Google Maps |
 | 2026-01-31 | Week 3 mobile-backend integration | ✅ Complete |
 | 2026-02-04 | Google Maps Platform migration | ✅ Complete |
 | 2026-02-06 | FR-1.2 KYC upload (R2) + FR-1.3 Biometric screen | ✅ Complete |
-| 2026-02-07 | Phase 1 bug fixes: 403 fix, ORCR removal, KYC persistence, biometric leniency, navigation fixes, hamburger menu | ✅ Complete |
-| Week 4 | Integration testing | ⚠️ In Progress |
-| Week 4-5 | Core ride functionality | 📅 Planned |
-| Week 5-6 | Real-time tracking & safety | 📅 Planned |
-| Week 6-7 | Financial & communication | 📅 Planned |
-| Week 7-9 | Admin & operations | 📅 Planned |
+| 2026-02-07 | Phase 1 bug fixes (403, ORCR, KYC persistence, biometric leniency, navigation, menu) | ✅ Complete |
+| 2026-02-13 | Firebase Phone Auth integration (real phone OTP) | ✅ Complete |
+| 2026-02-14 | Phase 2 Week 4 — Core Booking Engine (RiderVehicle, Surge, Promo, Dispatch, BookingConfirm, ActiveRide) | ✅ Complete |
+| 2026-02-17 | Firebase App Check + resend OTP fix + vehicle 409 idempotency | ✅ Complete |
+| 2026-02-20 | Phase 2 Week 5 — Driver Booking Flow (DriveRequests, DriverActiveRide, DriverTripCompletion, dispatch normalization) | ✅ Complete |
+| 2026-02-20 | Phase 2 Week 5 — Real-time Tracking (TrackingSocketClient, geofencing, ETA, turn-by-turn nav, actual fare) | ✅ Complete |
+| 2026-02-21 | Phase 3 Week 7 — Admin Web Dashboard (driver verification, bookings, stats, login) | ✅ Complete |
+| Week 6 | Financial & communication features | 📅 Planned |
+| Week 8–9 | QA, deployment, production hardening | 📅 Planned |
 
 ---
 
@@ -38,15 +41,17 @@
 |-------|------------|
 | **Runtime** | Node.js 18+, NestJS 10 |
 | **Database** | PostgreSQL via Prisma ORM 5.15 |
-| **Authentication** | JWT with OTP-first flow |
+| **Authentication** | JWT with OTP-first flow + admin email/password |
 | **Encryption** | AES-256-GCM (at rest), TLS 1.3 (in transit) |
 | **Biometrics** | AWS Rekognition (with mock mode) |
 | **Storage** | Cloudflare R2 (S3-compatible, free tier: 10GB) |
-| **SMS** | Twilio (with console fallback for dev) |
-| **Maps** | Google Maps SDK (Android), Geocoding, Places, Distance Matrix APIs |
-| **Mobile** | Kotlin + Jetpack Compose, Retrofit, DataStore |
-| **Testing** | Jest with ts-jest |
-| **Deployment** | Render.com |
+| **SMS/OTP** | Firebase Phone Auth (real phones, 10K/month free), console SMS (emulators) |
+| **Maps** | Google Maps SDK (Android), Geocoding, Places, Distance Matrix, Directions APIs |
+| **Mobile** | Kotlin + Jetpack Compose, Retrofit, DataStore, Socket.IO client |
+| **Web Admin** | React 18 + TypeScript + Vite 7 + Tailwind CSS 4 + React Router v7 + Axios |
+| **WebSocket** | Socket.IO (NestJS gateway) — `/dispatch` and `/tracking` namespaces |
+| **Testing** | Jest with ts-jest (backend) |
+| **Deployment** | Render.com (API), Cloudflare R2 (storage) |
 
 ---
 
@@ -55,10 +60,17 @@
 ```
 Wheels_On_Go/
 ├── apps/
-│   ├── api/                           # NestJS REST API (Phase 1)
+│   ├── api/                           # NestJS REST API
 │   │   ├── src/
-│   │   │   ├── auth/                  # OTP, JWT, biometric flow
+│   │   │   ├── auth/                  # OTP, JWT, biometric, admin login
 │   │   │   ├── driver/                # Driver profiles, KYC, admin approval
+│   │   │   ├── admin/                 # Admin stats + bookings endpoints
+│   │   │   ├── rides/                 # Ride creation, status, fare calculation
+│   │   │   ├── dispatch/              # WebSocket dispatch + routing engine
+│   │   │   ├── tracking/              # Real-time location + geofencing
+│   │   │   ├── rider-vehicle/         # Rider vehicle CRUD
+│   │   │   ├── pricing/               # Surge pricing + promo codes
+│   │   │   ├── location/              # Geocoding, autocomplete, distance
 │   │   │   ├── biometric/             # Face recognition (AWS Rekognition/mock)
 │   │   │   ├── storage/               # S3-compatible storage for uploads
 │   │   │   ├── encryption/            # AES-256-GCM PII encryption
@@ -68,19 +80,29 @@ Wheels_On_Go/
 │   │   │   ├── prisma/                # Prisma service & middleware
 │   │   │   └── main.ts                # Application bootstrap
 │   │   ├── prisma/
-│   │   │   ├── schema.prisma          # 40+ data models (1029 lines)
+│   │   │   ├── schema.prisma          # 40+ data models
+│   │   │   ├── seed-admin.ts          # Admin user seed script
 │   │   │   └── migrations/            # Database migrations
 │   │   ├── scripts/                   # Database utilities
-│   │   └── test/                      # Unit tests
-│   └── mobile/                        # Android app scaffold (Kotlin/Compose)
+│   │   └── test/                      # Unit tests (122 passing)
+│   ├── mobile/                        # Android app (Kotlin/Compose)
+│   └── web/                           # React admin dashboard
+│       ├── src/
+│       │   ├── api/                   # Axios API clients
+│       │   ├── context/               # AuthContext (JWT)
+│       │   ├── components/            # Layout, Sidebar, StatusBadge, etc.
+│       │   ├── pages/                 # Login, Dashboard, Drivers, Bookings
+│       │   └── types/                 # TypeScript interfaces
+│       ├── vite.config.ts             # Port 3001, proxy /api → localhost:3000
+│       └── package.json
 ├── packages/
 │   └── shared/                        # API contracts documentation
 ├── docs/                              # Project documentation
-│   ├── data-privacy-policy.md         # GDPR/CCPA compliance
-│   ├── database-schema.md             # Complete schema docs
-│   ├── testing-status.md              # Week 2 testing status
-│   ├── testing-roadmap.md             # 3-phase testing strategy
-│   └── test-results-summary.md        # Test coverage summary
+│   ├── data-privacy-policy.md
+│   ├── database-schema.md
+│   ├── testing-status.md
+│   ├── testing-roadmap.md
+│   └── test-results-summary.md
 ├── changes/                           # Detailed change logs
 ├── CHANGELOG.md                       # Living change log
 ├── render.yaml                        # Render deployment config
@@ -89,50 +111,134 @@ Wheels_On_Go/
 
 ---
 
-## Phase 1 API Endpoints (12 Endpoints)
+## Complete API Endpoints
 
 ### Authentication
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/auth/request-otp` | Request OTP code (rate-limited: 5/hour) |
-| POST | `/auth/verify-otp` | Verify OTP, receive tokens |
-| POST | `/auth/biometric/verify` | Face recognition verification |
-| GET | `/auth/me` | Get current user profile |
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/auth/request-otp` | Public | Request OTP code (emulators: console SMS) |
+| POST | `/auth/verify-otp` | Public | Verify OTP, receive tokens |
+| POST | `/auth/verify-firebase` | Public | Verify Firebase ID token (real phones) |
+| POST | `/auth/biometric/verify` | Biometric token | Face recognition verification |
+| POST | `/auth/admin/login` | Public | Admin email + password login |
+| GET | `/auth/me` | JWT | Get current user profile |
+| POST | `/auth/refresh` | Refresh token | Refresh access token |
 
 ### Driver Management
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/drivers/me` | Get driver profile |
-| GET | `/drivers/kyc` | Get KYC documents status |
-| POST | `/drivers/kyc/presign` | Request presigned upload URL |
-| POST | `/drivers/kyc/confirm` | Confirm document upload |
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/drivers/me` | JWT | Get driver profile |
+| GET | `/drivers/kyc` | JWT | Get KYC documents + upload status |
+| POST | `/drivers/kyc/presign` | JWT | Request presigned upload URL |
+| POST | `/drivers/kyc/confirm` | JWT | Confirm document upload |
 
-### Admin
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/admin/drivers/pending` | List pending driver approvals |
-| POST | `/admin/drivers/:id/approve` | Approve driver |
-| POST | `/admin/drivers/:id/reject` | Reject driver with reason |
+### Admin — Driver Verification
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/admin/drivers` | Admin JWT | List all drivers (paginated, filterable by status/search) |
+| GET | `/admin/drivers/pending` | Admin JWT | List pending driver approvals |
+| GET | `/admin/drivers/:id` | Admin JWT | Get driver detail with presigned document URLs |
+| POST | `/admin/drivers/:id/approve` | Admin JWT | Approve driver |
+| POST | `/admin/drivers/:id/reject` | Admin JWT | Reject driver with reason |
+
+### Admin — Dashboard & Bookings
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/admin/stats` | Admin JWT | Dashboard stats (activeRides, onlineDrivers, totalRiders, pendingVerifications, todayRevenue) |
+| GET | `/admin/bookings` | Admin JWT | List bookings (paginated, status/date/fare/search filters) |
+
+### Rides & Booking
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/rides` | JWT | Create ride (triggers dispatch) |
+| GET | `/rides/:id` | JWT | Get ride details |
+| POST | `/rides/:id/arrive` | Driver JWT | Mark arrived at pickup |
+| POST | `/rides/:id/start` | Driver JWT | Start ride |
+| POST | `/rides/:id/complete` | Driver JWT | Complete ride (calculates actual fare) |
+| POST | `/rides/:id/cancel` | JWT | Cancel ride |
+
+### Rider Vehicles
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/rider-vehicles` | JWT | Register vehicle |
+| GET | `/rider-vehicles` | JWT | List rider vehicles |
+| DELETE | `/rider-vehicles/:id` | JWT | Delete vehicle |
+| PATCH | `/rider-vehicles/:id/default` | JWT | Set default vehicle |
+
+### Pricing
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/pricing/fare-estimate` | JWT | Get fare estimate with surge |
+| POST | `/pricing/promo/validate` | JWT | Validate promo code |
+
+### Location
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/location/autocomplete` | JWT | Place autocomplete |
+| GET | `/location/geocode` | JWT | Geocode address |
+| GET | `/location/reverse-geocode` | JWT | Reverse geocode coordinates |
+
+### Tracking
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/tracking/location` | Driver JWT | Update driver location |
 
 ### Health
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/health` | Service health check |
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/health` | Public | Service health check |
+
+---
+
+## WebSocket Namespaces
+
+### `/dispatch` Namespace
+| Event | Direction | Description |
+|-------|-----------|-------------|
+| `dispatch:new_request` | Server → Driver | New ride request for driver |
+| `dispatch:accepted` | Driver → Server | Driver accepts ride |
+| `dispatch:declined` | Driver → Server | Driver declines ride |
+| `dispatch:selected` | Server → Driver | Driver selected for ride (30s window) |
+| `dispatch:expired` | Server → Driver | Selection window expired |
+| `dispatch:ride_accepted` | Server → Rider | Ride confirmed with driver info |
+
+### `/tracking` Namespace
+| Event | Direction | Description |
+|-------|-----------|-------------|
+| `LOCATION_UPDATE` | Driver → Server | Driver GPS coordinates |
+| `driver_location` | Server → Rider | Driver location forwarded |
+| `APPROACHING_PICKUP` | Server → Rider | Driver within 200m of pickup |
+| `ARRIVED_AT_PICKUP` | Server → Rider | Driver within 50m of pickup |
+| `APPROACHING_DROPOFF` | Server → Rider | Driver within 200m of dropoff |
+| `ARRIVED_AT_DROPOFF` | Server → Rider | Driver within 50m of dropoff |
 
 ---
 
 ## Database Schema Summary
 
 ### Phase 1 Models (7 Implemented)
-1. **User** - Core identity (RIDER/DRIVER/ADMIN roles)
-2. **OtpCode** - OTP management with TTL and attempts
-3. **DriverProfile** - Driver status and metrics
-4. **DriverDocument** - KYC documents (LICENSE, GOVERNMENT_ID, PROFILE_PHOTO)
-5. **AuditLog** - Comprehensive audit trail
-6. **BiometricVerification** - Face verification logs
-7. **RiderProfile** - Rider preferences (partial)
+1. **User** — Core identity (RIDER/DRIVER/ADMIN roles), passwordHash for admin login
+2. **OtpCode** — OTP management with TTL and attempts
+3. **DriverProfile** — Driver status and metrics
+4. **DriverDocument** — KYC documents (LICENSE, GOVERNMENT_ID, PROFILE_PHOTO)
+5. **AuditLog** — Comprehensive audit trail (51 actions)
+6. **BiometricVerification** — Face verification logs
+7. **RiderProfile** — Rider preferences
 
-### Phase 2-7 Models (40+ Total) - Schema Ready
+### Phase 2 Models (Active)
+| Model | Purpose |
+|-------|---------|
+| **Ride** | Core ride entity (status, fare, locations, driver/rider) |
+| **RideRoute** | Encoded polyline for route storage (Google Directions) |
+| **DriverLocationHistory** | GPS trail for actual fare calculation |
+| **GeofenceEvent** | Pickup/dropoff proximity events |
+| **RiderVehicle** | Rider's registered vehicles |
+| **PromoCode** | Discount codes (PERCENTAGE / FIXED_AMOUNT) |
+| **UserPromoUsage** | Per-user promo tracking |
+| **SurgePricingLog** | Surge multiplier audit trail |
+| **DispatchAttempt** | Driver dispatch attempt tracking |
+
+### Phase 2-7 Models (Schema Ready, 40+ Total)
 | Domain | Models |
 |--------|--------|
 | **User Management** | User, RiderProfile, RiderPreference, EmergencyContact, SavedLocation |
@@ -144,16 +250,6 @@ Wheels_On_Go/
 | **Communication** | MaskedCall, Message, Notification |
 | **Admin & Support** | SupportTicket, TicketReply, SystemConfiguration |
 | **Observability** | AuditLog |
-
-### Key Enums (25+)
-- **Roles:** UserRole (RIDER, DRIVER, ADMIN)
-- **Driver:** DriverStatus, DriverDocumentType, DocumentStatus
-- **Ride:** RideType, RideStatus
-- **Payment:** PaymentMethod, PaymentStatus, TransactionType
-- **Safety:** FatigueLevel, SosIncidentType, SosIncidentStatus
-- **Communication:** NotificationType, MessageType
-- **Support:** TicketCategory, TicketPriority, TicketStatus
-- **Vehicle:** VehicleType
 
 ---
 
@@ -197,7 +293,7 @@ Wheels_On_Go/
 ## Audit Logging
 
 ### 51 Audit Actions across 11 Categories
-1. **Authentication:** OTP_REQUESTED, OTP_VERIFIED, LOGIN_SUCCESS, LOGIN_FAILED, etc.
+1. **Authentication:** OTP_REQUESTED, OTP_VERIFIED, LOGIN_SUCCESS, LOGIN_FAILED, ADMIN_LOGIN, etc.
 2. **User Management:** USER_CREATED, USER_UPDATED, USER_SUSPENDED
 3. **KYC & Driver:** DRIVER_APPROVED, DRIVER_REJECTED, BIOMETRIC_VERIFIED
 4. **Ride Management:** RIDE_CREATED, RIDE_COMPLETED, RIDE_CANCELLED_BY_*
@@ -213,19 +309,24 @@ Wheels_On_Go/
 
 ## Testing Status
 
-### Current Coverage
+### Current Coverage (as of Feb 21, 2026)
 | Component | Unit | Integration | E2E |
 |-----------|------|-------------|-----|
+| Backend Tests | ✅ 122 passing (13 suites) | ⚠️ Pending | ⚠️ Pending |
+| Mobile Tests | ✅ 87 compiled (12 files) — JVM crash blocks runtime | ⚠️ Pending | ⚠️ Pending |
 | EncryptionService | ✅ 100% (22 tests) | ⚠️ Pending | ⚠️ Pending |
+| FirebaseService | ✅ 100% (5 tests) | ⚠️ Pending | ⚠️ Pending |
+| AuthService | ✅ Firebase + admin login flows | ⚠️ Pending | ⚠️ Pending |
+| RiderVehicleService | ✅ 100% (10 tests incl. idempotency) | ⚠️ Pending | ⚠️ Pending |
+| SurgePricingService | ✅ (5 tests) | ⚠️ Pending | ⚠️ Pending |
+| Web Admin Build | ✅ TypeScript clean, Vite build (302KB JS + 19KB CSS) | N/A | ⚠️ Pending |
 | PrismaMiddleware | N/A | ⚠️ Pending | ⚠️ Pending |
 | AuditService | ⚠️ 0% | ⚠️ Pending | ⚠️ Pending |
-| Auth endpoints | ✅ Basic | ⚠️ Pending | ⚠️ Pending |
-| Driver endpoints | ✅ Basic | ⚠️ Pending | ⚠️ Pending |
 
 ### Testing Roadmap
-- **Phase 1 (Weeks 2-3):** Integration tests, E2E tests (6-8 hours)
-- **Phase 2 (Weeks 4-5):** Security tests, performance tests (9-12 hours)
-- **Phase 3 (Weeks 6-7):** Load tests, GDPR compliance tests (6-8 hours)
+- **Current (Weeks 4–5 + Phase 3):** 122 backend tests passing; mobile 87 tests compile, JVM crash blocks runtime; web build clean
+- **Next (Week 8):** Integration tests, E2E tests (6-8 hours)
+- **Phase 3 (Weeks 8–9):** Security tests, performance tests, load tests
 
 ---
 
@@ -246,24 +347,29 @@ ENCRYPTION_KEY=64-hex-characters-here
 
 # OTP/SMS
 OTP_CODE_TTL_SECONDS=300
-SMS_PROVIDER=twilio|console
-TWILIO_ACCOUNT_SID=...
-TWILIO_AUTH_TOKEN=...
-TWILIO_FROM_NUMBER=...
+SMS_PROVIDER=textbelt|console
+ALLOW_DEBUG_SMS=true
 
-# Storage (S3-compatible)
+# Firebase Phone Auth (for real phone OTP delivery)
+FIREBASE_PROJECT_ID=your-project-id
+FIREBASE_CLIENT_EMAIL=firebase-adminsdk-...@...iam.gserviceaccount.com
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...-----END PRIVATE KEY-----\n"
+
+# Storage (S3-compatible / Cloudflare R2)
 STORAGE_BUCKET=bucket-name
-STORAGE_REGION=region
-STORAGE_ENDPOINT=optional-custom-endpoint
+STORAGE_REGION=auto
+STORAGE_ENDPOINT=https://ACCOUNT_ID.r2.cloudflarestorage.com
+STORAGE_FORCE_PATH_STYLE=true
 AWS_ACCESS_KEY_ID=...
 AWS_SECRET_ACCESS_KEY=...
+AWS_REGION=auto
 
 # Biometric
 BIOMETRIC_MODE=mock|rekognition
 BIOMETRIC_MIN_CONFIDENCE=90
 
 # CORS
-CORS_ORIGINS=http://localhost:3000
+CORS_ORIGINS=http://localhost:3001,https://your-admin-domain.com
 
 # Google Maps Platform
 GOOGLE_MAPS_API_KEY=your-google-maps-api-key
@@ -275,7 +381,8 @@ GOOGLE_MAPS_API_KEY=your-google-maps-api-key
 
 ### 1. Ride Fare Calculation
 ```
-totalFare = baseFare + (distance × costPerKm) + (duration × costPerMin) + surgePricing - promoDiscount
+estimatedFare = baseFare + (distance × costPerKm) + (duration × costPerMin) × surgeMultiplier - promoDiscount
+actualFare    = sum of Haversine distances across GPS trail (on COMPLETED) → falls back to estimatedFare
 ```
 
 ### 2. Commission Deduction (Default 20%)
@@ -287,208 +394,141 @@ netAmount = totalFare × (1 - commissionRate)
 1. Find drivers within 5km radius (Haversine distance)
 2. Sort by distance ascending
 3. Dispatch to closest driver
-4. If declined, dispatch to next (max 10 attempts)
+4. If declined or 30s timeout, dispatch to next (max 10 attempts)
 5. If all decline, expand radius by 2km and retry
 
 ### 4. Rating-Based Suspension
 - If averageRating < 3.0 AND totalRatings >= 10: isSuspended = true
 
-### 5. Geofencing (50m Radius)
-- Trigger DRIVER_ARRIVED when distance ≤ 50 meters
-- Automatic status update and push notification
+### 5. Geofencing (50m / 200m Radius)
+- 200m from pickup → APPROACHING_PICKUP event to rider
+- 50m from pickup → ARRIVED_AT_PICKUP event to rider
+- 200m from dropoff → APPROACHING_DROPOFF event to rider
+- 50m from dropoff → ARRIVED_AT_DROPOFF event to rider
 
 ### 6. BLOWBAGETS Safety Checklist
 - Driver must complete daily checklist (Brakes, Lights, Oil, Water, Battery, Air, Gas, Engine, Tools, Self)
-- Expires after 24 hours
-- Blocks driver from going online if expired
+- Expires after 24 hours; blocks driver from going online if expired
 
 ### 7. Fatigue Detection
 - Google ML Kit monitors eye probability
 - Alert if avgEyeProbability < 0.4 for > 2 seconds
 
----
-
-## Recent Changes (from CHANGELOG.md)
-
-### 2026-02-07 - Phase 1 Bug Fixes & Polish
-- Fixed 403 "Missing user context" on KYC upload (removed global RolesGuard from app.module.ts)
-- Removed ORCR document type — only LICENSE, GOVERNMENT_ID, PROFILE_PHOTO remain
-- Fixed DocumentUploadViewModel @JvmOverloads crash
-- KYC uploads now persist across sessions (ViewModel fetches existing status on init via GET /drivers/kyc)
-- Backend GET /drivers/kyc returns proper { documents, allUploaded, allVerified } response
-- Biometric leniency: accepts BIOMETRIC_WEAK on older phones; OTP-only if no biometrics available
-- Fixed driver skipping DocumentUpload (route args with needsKyc flag)
-- Added hamburger menu drawer (AppDrawer with phone, role, logout)
-- Added ModalNavigationDrawer to HomeScreen
-
-### 2026-02-06 10:00 PHT - FR-1.2 KYC + FR-1.3 Biometric Complete
-- Configured Cloudflare R2 storage for KYC document uploads
-- Enabled KYC presign/confirm endpoints (removed 503 blocks)
-- Fixed mobile DTO field name mismatches (KYC + biometric)
-- Implemented real file upload pipeline: presign → R2 PUT → confirm
-- Added file picker (ActivityResultContracts.GetContent) to document upload
-- Created BiometricVerificationScreen with camera intent (TakePicturePreview)
-- Updated AuthInterceptor to route biometric token for face verify endpoint
-- Added camera permission to AndroidManifest
-- Full navigation flow: OTP → biometric (if required) → LocationConfirm → Home
-
-### 2026-02-04 12:00 PHT - Google Maps Platform Migration
-- Replaced OSMDroid + Nominatim + Photon + OSRM with Google APIs
-- Rewrote map composable (OSMDroid → maps-compose)
-- Fixed AndroidManifest API key name (geo.API_KEY not gms.maps.API_KEY)
-
-### 2026-01-29 00:30 PHT - Week 2 Data Privacy Setup
-- AES-256-GCM encryption service
-- Transparent Prisma encryption middleware
-- 51 audit actions for GDPR compliance
-- Helmet security headers (CSP, HSTS)
-- Hash columns for searchable encryption
-- Backfill script for existing data
-- Comprehensive data privacy policy documentation
-- 22 unit tests for encryption service
-
-### 2026-01-28 14:00 PHT - Complete Database Schema
-- Extended from 6 models to 40+ models
-- 25+ enums for comprehensive type safety
-- Strategic indexes for < 2s booking delivery
-- Applied to production database
-- Backfill script for existing User/DriverProfile records
-
-### 2026-01-19 04:00 PHT - Initial Scaffold
-- NestJS REST API with Prisma
-- Android Compose app scaffold
-- JWT authentication stubs
-- Health endpoint
-- Render deployment config
+### 8. Admin Driver Verification Flow
+```
+Driver registers → Uploads 3 docs (LICENSE, GOVERNMENT_ID, PROFILE_PHOTO)
+Admin reviews via web dashboard → Views presigned document images
+Admin approves → DriverStatus = APPROVED, driver can go online
+Admin rejects (with reason) → DriverStatus = REJECTED, driver notified
+```
 
 ---
 
 ## Key Files Reference
 
+### Backend
 | Purpose | File Path |
 |---------|-----------|
 | Main entry | `apps/api/src/main.ts` |
 | App module | `apps/api/src/app.module.ts` |
 | Prisma schema | `apps/api/prisma/schema.prisma` |
-| Prisma service | `apps/api/src/prisma/prisma.service.ts` |
+| Admin seed | `apps/api/prisma/seed-admin.ts` |
+| Admin auth | `apps/api/src/auth/auth.service.ts` (adminLogin method) |
+| Admin driver controller | `apps/api/src/driver/admin-driver.controller.ts` |
+| Admin stats controller | `apps/api/src/admin/admin-stats.controller.ts` |
+| Admin bookings controller | `apps/api/src/admin/admin-bookings.controller.ts` |
+| Dispatch gateway | `apps/api/src/dispatch/dispatch.gateway.ts` |
+| Tracking gateway | `apps/api/src/tracking/tracking.gateway.ts` |
+| Ride service (actual fare) | `apps/api/src/rides/ride.service.ts` |
 | Encryption service | `apps/api/src/encryption/encryption.service.ts` |
-| Encryption constants | `apps/api/src/encryption/encryption.constants.ts` |
-| Audit service | `apps/api/src/audit/audit.service.ts` |
-| Auth controller | `apps/api/src/auth/auth.controller.ts` |
-| Driver controller | `apps/api/src/driver/driver.controller.ts` |
-| Data privacy policy | `docs/data-privacy-policy.md` |
-| Database schema docs | `docs/database-schema.md` |
-| Testing status | `docs/testing-status.md` |
-| Testing roadmap | `docs/testing-roadmap.md` |
-| Environment example | `apps/api/.env.example` |
-| Backfill script | `apps/api/scripts/backfill-encrypt-pii.ts` |
+| Firebase service | `apps/api/src/auth/firebase.service.ts` |
+
+### Web Admin (`apps/web/`)
+| Purpose | File Path |
+|---------|-----------|
+| App router | `apps/web/src/App.tsx` |
+| Auth context | `apps/web/src/context/AuthContext.tsx` |
+| API client (Axios) | `apps/web/src/api/client.ts` |
+| Login page | `apps/web/src/pages/LoginPage.tsx` |
+| Dashboard page | `apps/web/src/pages/DashboardPage.tsx` |
+| Drivers page | `apps/web/src/pages/DriversPage.tsx` |
+| Driver detail + doc viewer | `apps/web/src/pages/DriverDetailPage.tsx` |
+| Bookings page | `apps/web/src/pages/BookingsPage.tsx` |
+| Sidebar layout | `apps/web/src/components/Sidebar.tsx` |
+| Vite config (proxy) | `apps/web/vite.config.ts` |
 
 ### Mobile App Key Files
 | Purpose | File Path |
 |---------|-----------|
-| Application class | `apps/mobile/.../WheelsOnGoApplication.kt` |
 | Navigation graph | `apps/mobile/.../AppNav.kt` |
-| Route definitions | `apps/mobile/.../ui/navigation/Routes.kt` |
-| API Client | `apps/mobile/.../data/network/ApiClient.kt` |
-| Token Manager | `apps/mobile/.../data/auth/TokenManager.kt` |
-| Auth Interceptor | `apps/mobile/.../data/network/AuthInterceptor.kt` |
-| Auth Repository | `apps/mobile/.../data/repository/AuthRepository.kt` |
-| Google Map View | `apps/mobile/.../ui/components/map/OpenStreetMap.kt` |
-| Home Screen | `apps/mobile/.../ui/screens/home/HomeScreen.kt` |
-| Phone Input | `apps/mobile/.../ui/screens/auth/PhoneInputScreen.kt` |
-| OTP Verification | `apps/mobile/.../ui/screens/auth/OtpVerificationScreen.kt` |
-| Biometric Verify | `apps/mobile/.../ui/screens/auth/BiometricVerificationScreen.kt` |
-| Document Upload | `apps/mobile/.../ui/screens/driver/DocumentUploadScreen.kt` |
-| App Drawer | `apps/mobile/.../ui/components/AppDrawer.kt` |
-| Session Resume | `apps/mobile/.../ui/screens/auth/SessionResumeViewModel.kt` |
-| Biometric Helper | `apps/mobile/.../data/auth/BiometricPromptHelper.kt` |
+| Dispatch socket | `apps/mobile/.../data/websocket/DispatchSocketClient.kt` |
+| Tracking socket | `apps/mobile/.../data/websocket/TrackingSocketClient.kt` |
+| Rider ActiveRide | `apps/mobile/.../ui/screens/ride/ActiveRideScreen.kt` |
+| Driver ActiveRide | `apps/mobile/.../ui/screens/driver/DriverActiveRideScreen.kt` |
+| Driver home | `apps/mobile/.../ui/screens/driver/DriverHomeScreen.kt` |
+| Drive requests | `apps/mobile/.../ui/screens/driver/DriveRequestsScreen.kt` |
+| Trip completion | `apps/mobile/.../ui/screens/driver/DriverTripCompletionScreen.kt` |
+| Booking confirm | `apps/mobile/.../ui/screens/booking/BookingConfirmScreen.kt` |
+| Firebase auth helper | `apps/mobile/.../data/auth/FirebasePhoneAuthHelper.kt` |
+| Token manager | `apps/mobile/.../data/auth/TokenManager.kt` |
 
 ---
 
-## Mobile App Integration (Week 3)
+## Recent Changes Summary
 
-### Architecture
-```
-Mobile App (Kotlin/Compose)
-├── data/
-│   ├── auth/TokenManager.kt         # DataStore-based JWT storage
-│   ├── network/
-│   │   ├── ApiClient.kt             # Retrofit setup with interceptors
-│   │   ├── AuthApi.kt               # Auth endpoints interface
-│   │   ├── DriverApi.kt             # Driver endpoints interface
-│   │   ├── LocationApi.kt           # Location endpoints interface
-│   │   └── AuthInterceptor.kt       # JWT header injection
-│   ├── repository/
-│   │   └── AuthRepository.kt        # Auth business logic
-│   └── models/
-│       ├── auth/AuthModels.kt       # Auth DTOs (OTP, biometric)
-│       ├── driver/DriverModels.kt   # Driver/KYC DTOs
-│       └── location/LocationModels.kt
-└── ui/screens/
-    ├── auth/PhoneInputViewModel.kt   # OTP request
-    ├── auth/OtpVerificationViewModel.kt  # OTP verify + biometric routing
-    ├── auth/BiometricVerificationScreen.kt  # Face verification camera UI
-    ├── auth/BiometricVerificationViewModel.kt  # Camera→Base64→API
-    └── driver/DocumentUploadViewModel.kt # KYC presign→R2→confirm
-```
+### 2026-02-21 — Phase 3: Admin Web Dashboard
+- `apps/web/` NEW — React 18 + Vite + Tailwind CSS admin dashboard
+- Login page (email/password on green background, matches Figma)
+- Dashboard with live stat cards from `GET /admin/stats`
+- Drivers page with Applicants/Registered accordion sections + status mapping
+- Driver detail page with document image viewer modal, approve/reject
+- Bookings page with table, status/date/fare filters, pagination
+- Backend: `POST /auth/admin/login`, `GET /admin/drivers` (all), `GET /admin/drivers/:id`, `GET /admin/stats`, `GET /admin/bookings`
+- Admin seed: `admin@wheelsongo.com` / `Admin123!` via `npm run seed:admin`
+- 122 backend tests unchanged
 
-### Integration Status
-| Feature | Backend | Mobile | Integration | Notes |
-|---------|---------|--------|-------------|-------|
-| OTP Request | ✅ | ✅ | ✅ Connected | Rate-limited 3/min |
-| OTP Verify | ✅ | ✅ | ✅ Connected | Response structure fixed (2026-01-31) |
-| Token Storage | N/A | ✅ | ✅ DataStore | Handles biometric + access tokens |
-| JWT Auth Header | N/A | ✅ | ✅ AuthInterceptor | Auto-injected; routes biometric token for face verify |
-| Driver Profile | ✅ | ✅ | ✅ Connected | Biometric flow supported |
-| KYC Upload | ✅ | ✅ | ✅ Connected | Cloudflare R2 via presigned URL; persists across sessions (2026-02-07) |
-| KYC Status Fetch | ✅ | ✅ | ✅ Connected | GET /drivers/kyc returns { documents, allUploaded, allVerified } (2026-02-07) |
-| Biometric Verify | ✅ | ✅ | ✅ Connected | Camera selfie → Base64 → backend; lenient on older phones (2026-02-07) |
-| Session Resume | N/A | ✅ | ✅ Connected | Auto-refresh tokens on app restart (2026-02-07) |
-| Hamburger Menu | N/A | ✅ | ✅ Working | ModalNavigationDrawer with AppDrawer (2026-02-07) |
-| URL Encoding | N/A | ✅ | ✅ Fixed | Phone number `+` preserved (2026-01-31) |
+### 2026-02-20 — Phase 2 Week 5: Real-time Tracking & Navigation
+- TrackingSocketClient (new Socket.IO client for `/tracking` namespace)
+- Driver broadcasts GPS every 3s; rider receives live marker + route polyline
+- ETA dual-strategy: Haversine instant + Directions API every 30s
+- Geofence events: APPROACHING/ARRIVED at PICKUP/DROPOFF (200m/50m thresholds)
+- Turn-by-turn navigation: "Navigate" FAB on DriverActiveRideScreen → Google Maps intent
+- Backend: `storeRideRoute()` on ride acceptance, actual fare calculation on COMPLETED
+- Dispatch fixes: 30s SELECTED timeout, EXPIRED event, normalized accepted payload
 
-### Critical Fixes Applied (2026-01-31)
-**Issue #1: API Response Structure Mismatch**
-- **Problem:** Backend returned `{userId, role, accessToken}` but mobile expected `{accessToken, user: {...}}`
-- **Fix:** Updated `apps/api/src/auth/auth.service.ts` to return correct structure
-- **Impact:** OTP verification now succeeds, users can log in
+### 2026-02-20 — Phase 2 Week 5: Driver Booking Flow
+- DriveRequestsScreen: waiting spinner + ride request cards
+- DriverActiveRideScreen: full map + status banner + phase CTAs
+- DriverTripCompletionScreen: post-trip summary
+- Dispatch payload normalization (riderName, pickupLat/Lng)
+- Bug fixes: activeRideId navigation loop, fare format (₱1500.0 → ₱1500)
 
-**Issue #2: URL Encoding Bug**
-- **Problem:** Phone number `+639...` became ` 639...` (space) in navigation URLs
-- **Fix:** URL-encode phone numbers in `apps/mobile/.../ui/navigation/Routes.kt`
-- **Impact:** Backend validation now passes, proper E.164 format preserved
+### 2026-02-17 — Firebase App Check + Bug Fixes
+- Firebase App Check SDK (DebugAppCheckProviderFactory + PlayIntegrity for release)
+- Resend OTP device-aware (Firebase for real phones, backend for emulators)
+- Vehicle 409 idempotency fix
 
-**Issue #3: OTP Error UX**
-- **Problem:** OTP cleared on error, preventing backspace corrections
-- **Fix:** Preserve OTP value in `OtpVerificationViewModel.kt` error handler
-- **Impact:** Users can fix typos instead of re-entering entire code
+### 2026-02-14 — Phase 2 Week 4: Core Booking Engine
+- RiderVehicle CRUD (10 tests), surge pricing, promo codes
+- BookingConfirmScreen + ActiveRide mobile screens (rider side)
+- WebSocket dispatch integration
 
-### Google Maps Platform
-| Feature | Service | Notes |
-|---------|---------|-------|
-| Map Display | Google Maps Android SDK (`maps-compose:4.2.0`) | API key in AndroidManifest |
-| Autocomplete | Google Places Autocomplete API | Does NOT return lat/lng; Place Details required |
-| Place Details | Google Place Details API | Field-masked to cheapest billing tier |
-| Geocoding | Google Geocoding API | Reverse geocoding included |
-| Distance/ETA | Google Distance Matrix API | Falls back to Haversine on failure |
-| Device GPS | FusedLocationProvider (`play-services-location`) | Unchanged — device hardware, not maps |
-
-**Billing notes:**
-- Session tokens group autocomplete + one Details call for optimised pricing
-- Place Details restricted to `name,formatted_address,geometry/location,types` (Basic tier)
-- Distance Matrix uses `duration` (static); switch to `duration_in_traffic` later by adding `departure_time=now`
+### 2026-02-13 — Firebase Phone Auth
+- Real phone OTP via Firebase SDK (10K/month free)
+- Emulator detection with fallback to backend console SMS
 
 ---
 
 ## Current Limitations
 
-1. **Biometric Mode:** Defaults to mock mode (always returns match=true). Switch to `BIOMETRIC_MODE=rekognition` for production with AWS credentials.
-2. **Liveness Detection:** Camera captures static photo via `TakePicturePreview`. No anti-spoofing (could accept photos of photos). Consider ML Kit Face Detection for liveness in production.
-3. **Admin Dashboard UI:** No web frontend for admin driver approval — admin endpoints exist but need a UI.
+1. **Biometric Mode:** Defaults to mock mode (always match=true). Set `BIOMETRIC_MODE=rekognition` for production with AWS credentials.
+2. **Liveness Detection:** Camera captures static photo. No anti-spoofing. Consider ML Kit Face Detection for production.
+3. **Admin Dashboard Payments/Customers:** Sidebar items exist but show "Coming Soon". Features deferred to later phase.
 4. **Integration Tests:** Not yet implemented (significant gap for production).
 5. **Key Rotation:** Procedure not yet documented.
 6. **GDPR Endpoints:** Data export/deletion endpoints not yet implemented.
-7. **Logout:** Hamburger menu has logout button wired to clear tokens + navigate to welcome, but no backend token invalidation endpoint.
+7. **Logout:** Token cleared locally but no backend token invalidation endpoint.
+8. **Firebase Quota:** Free tier limited to 10K phone auth verifications/month.
 
 ---
 
@@ -496,20 +536,28 @@ Mobile App (Kotlin/Compose)
 
 ```bash
 # Development
-npm run dev:api                    # Start dev server
+npm run dev:api                    # Start API dev server (port 3000)
+npm run dev:web                    # Start web admin (port 3001, proxies /api)
 npm run prisma:studio              # Open Prisma Studio
 
 # Database
 npm run prisma:generate            # Generate Prisma client
-npm run prisma:migrate             # Run migrations
+npm run prisma:migrate             # Run migrations (prisma migrate deploy)
+npm run seed:admin                 # Seed admin user (admin@wheelsongo.com / Admin123!)
 
 # Testing
-npm run test:api                   # Run all tests
+npm run test:api                   # Run all backend tests (122 passing)
 npm run test:api -- --watch        # Watch mode
 
-# Build & Deploy
-npm run build:prod                 # Production build
+# Build
+npm run build:api                  # Production API build
+npm run build:web                  # Production web build (302KB JS + 19KB CSS)
 npm run start:api                  # Start production server
+
+# Mobile (Windows — invoke java directly)
+cd apps/mobile && "/c/Users/Kenneth Ayade/.jdks/jbr-21.0.10/bin/java" \
+  -classpath gradle/wrapper/gradle-wrapper.jar \
+  org.gradle.wrapper.GradleWrapperMain assembleDebug
 ```
 
 ---

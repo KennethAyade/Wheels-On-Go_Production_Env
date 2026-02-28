@@ -11,8 +11,10 @@ import com.wheelsongo.app.data.models.auth.RefreshTokenRequest
 import com.wheelsongo.app.data.models.auth.RefreshTokenResponse
 import com.wheelsongo.app.data.models.auth.RequestOtpRequest
 import com.wheelsongo.app.data.models.auth.RequestOtpResponse
+import com.wheelsongo.app.data.models.auth.VerifyFirebaseRequest
 import com.wheelsongo.app.data.models.auth.VerifyOtpRequest
 import com.wheelsongo.app.data.models.auth.VerifyOtpResponse
+import com.wheelsongo.app.BuildConfig
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import okhttp3.OkHttpClient
@@ -21,7 +23,9 @@ import retrofit2.Response
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import retrofit2.http.Body
+import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.PATCH
 import retrofit2.http.POST
 import java.util.concurrent.TimeUnit
 
@@ -62,7 +66,8 @@ object ApiClient {
 
     private val loggingInterceptor: HttpLoggingInterceptor by lazy {
         HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BODY
+            level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BODY
+                    else HttpLoggingInterceptor.Level.BASIC
         }
     }
 
@@ -77,6 +82,21 @@ object ApiClient {
             .build()
     }
 
+    /**
+     * OkHttp client with extended timeout for Firebase verification
+     * Handles Render free tier cold start (30-60s) + processing time
+     */
+    private val firebaseClient: OkHttpClient by lazy {
+        check(isInitialized) { "ApiClient must be initialized before use" }
+        OkHttpClient.Builder()
+            .addInterceptor(AuthInterceptor(tokenManager))
+            .addInterceptor(loggingInterceptor)
+            .connectTimeout(60, TimeUnit.SECONDS)   // Increased from 30s
+            .readTimeout(60, TimeUnit.SECONDS)      // Increased from 30s
+            .writeTimeout(30, TimeUnit.SECONDS)     // Keep same
+            .build()
+    }
+
     private val retrofit: Retrofit by lazy {
         Retrofit.Builder()
             .baseUrl(AppConfig.BASE_URL)
@@ -86,10 +106,29 @@ object ApiClient {
     }
 
     /**
-     * Authentication API endpoints
+     * Retrofit instance with extended timeout for Firebase operations
+     */
+    private val firebaseRetrofit: Retrofit by lazy {
+        Retrofit.Builder()
+            .baseUrl(AppConfig.BASE_URL)
+            .addConverterFactory(MoshiConverterFactory.create(moshi))
+            .client(firebaseClient)  // Use longer timeout client
+            .build()
+    }
+
+    /**
+     * Authentication API endpoints (standard timeout)
      */
     val authApi: AuthApi by lazy {
         retrofit.create(AuthApi::class.java)
+    }
+
+    /**
+     * Authentication API endpoints with extended timeout for Firebase verification
+     * Use this for /auth/verify-firebase to handle Render cold start
+     */
+    val firebaseAuthApi: AuthApi by lazy {
+        firebaseRetrofit.create(AuthApi::class.java)
     }
 
     /**
@@ -104,6 +143,35 @@ object ApiClient {
      */
     val locationApi: LocationApi by lazy {
         retrofit.create(LocationApi::class.java)
+    }
+
+    /**
+     * Ride management API endpoints
+     */
+    val rideApi: RideApi by lazy {
+        retrofit.create(RideApi::class.java)
+    }
+
+    /**
+     * Rider vehicle management API endpoints
+     */
+    val riderVehicleApi: RiderVehicleApi by lazy {
+        retrofit.create(RiderVehicleApi::class.java)
+    }
+
+    val ratingApi: RatingApi by lazy {
+        retrofit.create(RatingApi::class.java)
+    }
+
+    /**
+     * Driver location tracking API endpoints
+     */
+    val trackingApi: TrackingApi by lazy {
+        retrofit.create(TrackingApi::class.java)
+    }
+
+    val fatigueApi: FatigueApi by lazy {
+        retrofit.create(FatigueApi::class.java)
     }
 }
 
@@ -132,6 +200,14 @@ interface AuthApi {
      */
     @POST("auth/verify-otp")
     suspend fun verifyOtp(@Body request: VerifyOtpRequest): Response<VerifyOtpResponse>
+
+    /**
+     * Verify Firebase Phone Auth token and receive JWT tokens
+     * POST /auth/verify-firebase
+     * Used on real phones (Firebase handles SMS delivery + OTP verification)
+     */
+    @POST("auth/verify-firebase")
+    suspend fun verifyFirebase(@Body request: VerifyFirebaseRequest): Response<VerifyOtpResponse>
 
     /**
      * Get current authenticated user's profile
@@ -164,4 +240,39 @@ interface AuthApi {
      */
     @POST("auth/logout")
     suspend fun logout(@Body request: LogoutRequest): Response<Unit>
+
+    /**
+     * Update rider profile (firstName, lastName, age, address)
+     * PATCH /auth/profile
+     */
+    @PATCH("auth/profile")
+    suspend fun updateRiderProfile(@Body request: com.wheelsongo.app.data.models.profile.RiderProfileSetupRequest): Response<com.wheelsongo.app.data.models.profile.ProfileSetupResponse>
+
+    /**
+     * Update profile (partial — any subset of firstName, lastName, age, address)
+     * PATCH /auth/profile
+     */
+    @PATCH("auth/profile")
+    suspend fun updateProfile(@Body request: com.wheelsongo.app.data.models.profile.UpdateProfileRequest): Response<com.wheelsongo.app.data.models.profile.ProfileSetupResponse>
+
+    /**
+     * Get current user profile (flat response, no wrapper)
+     * GET /auth/me
+     */
+    @GET("auth/me")
+    suspend fun me(): Response<com.wheelsongo.app.data.models.profile.MeResponse>
+
+    /**
+     * Upload profile photo (base64)
+     * POST /auth/profile-photo
+     */
+    @POST("auth/profile-photo")
+    suspend fun uploadProfilePhoto(@Body request: com.wheelsongo.app.data.models.profile.UploadProfilePhotoRequest): Response<com.wheelsongo.app.data.models.profile.ProfilePhotoResponse>
+
+    /**
+     * Delete (deactivate) account
+     * DELETE /auth/me
+     */
+    @DELETE("auth/me")
+    suspend fun deleteAccount(): Response<com.wheelsongo.app.data.models.profile.DeleteAccountResponse>
 }

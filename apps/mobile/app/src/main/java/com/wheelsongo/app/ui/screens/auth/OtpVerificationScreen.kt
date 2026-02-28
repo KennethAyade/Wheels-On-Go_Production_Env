@@ -1,5 +1,7 @@
 package com.wheelsongo.app.ui.screens.auth
 
+import android.app.Activity
+import android.content.pm.PackageManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -29,7 +31,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.wheelsongo.app.data.auth.BiometricPromptHelper
+
 import com.wheelsongo.app.ui.components.NumericKeypad
 import com.wheelsongo.app.ui.components.headers.TopBarWithBack
 import com.wheelsongo.app.ui.components.inputs.OtpInputField
@@ -44,14 +46,16 @@ import com.wheelsongo.app.ui.theme.WheelsOnGoTheme
 fun OtpVerificationScreen(
     phoneNumber: String,
     role: String,
+    verificationId: String? = null,
     onBack: () -> Unit,
-    onVerified: (needsKyc: Boolean) -> Unit,
+    onVerified: (needsKyc: Boolean, isProfileComplete: Boolean) -> Unit,
     onBiometricRequired: () -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: OtpVerificationViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
+    val activity = context as? Activity
 
     // Start countdown on first composition
     LaunchedEffect(Unit) {
@@ -61,13 +65,13 @@ fun OtpVerificationScreen(
     // Navigate when verified - route to biometric if required
     LaunchedEffect(uiState.isVerified, uiState.biometricRequired) {
         if (uiState.isVerified) {
-            if (uiState.biometricRequired && BiometricPromptHelper.canAuthenticate(context)) {
-                // Device supports biometrics — proceed with face verification
+            if (uiState.biometricRequired && context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)) {
+                // Returning driver — proceed with camera-based face verification
                 onBiometricRequired()
             } else {
-                // No biometric support or not required — OTP is sufficient
+                // Not required — OTP is sufficient
                 val needsKyc = uiState.userRole == "DRIVER" && !uiState.biometricEnrolled
-                onVerified(needsKyc)
+                onVerified(needsKyc, uiState.isProfileComplete)
             }
         }
     }
@@ -160,11 +164,30 @@ fun OtpVerificationScreen(
 
             // OTP Input Dots
             if (uiState.isLoading) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(32.dp),
-                    color = MaterialTheme.colorScheme.primary,
-                    strokeWidth = 3.dp
-                )
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(horizontal = 24.dp)
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(48.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        strokeWidth = 4.dp
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Verifying with server...",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "This may take up to a minute on first login.\nPlease wait...",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
+                }
             } else {
                 OtpInputField(
                     otpValue = uiState.otpValue,
@@ -194,7 +217,14 @@ fun OtpVerificationScreen(
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier
-                        .clickable { viewModel.resendOtp(phoneNumber, role) }
+                        .clickable {
+                            viewModel.resendOtp(
+                                phoneNumber = phoneNumber,
+                                role = role,
+                                activity = activity,
+                                verificationId = verificationId
+                            )
+                        }
                         .padding(16.dp)
                 )
             } else {
@@ -210,7 +240,7 @@ fun OtpVerificationScreen(
             // Numeric Keypad
             NumericKeypad(
                 onNumberClick = { digit ->
-                    viewModel.onDigitEntered(digit, phoneNumber, role)
+                    viewModel.onDigitEntered(digit, phoneNumber, role, verificationId)
                 },
                 onBackspaceClick = viewModel::onBackspace,
                 modifier = Modifier.padding(bottom = 24.dp)
@@ -227,7 +257,7 @@ private fun OtpVerificationScreenPreview() {
             phoneNumber = "+639761337834",
             role = "RIDER",
             onBack = {},
-            onVerified = { _ -> }
+            onVerified = { _, _ -> }
         )
     }
 }

@@ -76,10 +76,11 @@ data class DriverDocumentDto(
     @Json(name = "id") val id: String? = null,
     @Json(name = "type") val type: String,
     @Json(name = "status") val status: String? = null,
-    @Json(name = "s3Key") val s3Key: String? = null,
+    @Json(name = "storageKey") val storageKey: String? = null,
     @Json(name = "uploadedAt") val uploadedAt: String? = null,
     @Json(name = "verifiedAt") val verifiedAt: String? = null,
-    @Json(name = "rejectionReason") val rejectionReason: String? = null
+    @Json(name = "rejectionReason") val rejectionReason: String? = null,
+    @Json(name = "downloadUrl") val downloadUrl: String? = null
 )
 
 // ==========================================
@@ -165,6 +166,21 @@ data class RejectDriverRequest(
 data class AdminDriverActionResponse(
     @Json(name = "driver") val driver: DriverProfileResponse,
     @Json(name = "message") val message: String
+)
+
+// ==========================================
+// Driver Status Update
+// ==========================================
+
+/**
+ * Request to toggle driver online/offline status
+ * PATCH /drivers/me/status
+ */
+@JsonClass(generateAdapter = true)
+data class UpdateDriverStatusRequest(
+    @Json(name = "isOnline") val isOnline: Boolean,
+    @Json(name = "latitude") val latitude: Double? = null,
+    @Json(name = "longitude") val longitude: Double? = null
 )
 
 // ==========================================

@@ -1,35 +1,82 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { DriverStatus, User, UserRole } from '@prisma/client';
 import { createHash, randomUUID } from 'crypto';
+import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
 import { OtpService } from './otp.service';
+import { FirebaseService } from './firebase.service';
 import { RequestOtpDto } from './dto/request-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
+import { VerifyFirebaseDto } from './dto/verify-firebase.dto';
+import { AdminLoginDto } from './dto/admin-login.dto';
 import { JwtUser } from '../common/types/jwt-user.type';
 import { BiometricService } from '../biometric/biometric.service';
 import { BiometricVerifyDto } from './dto/biometric-verify.dto';
 import { AuditService } from '../audit/audit.service';
+import { StorageService } from '../storage/storage.service';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly otpService: OtpService,
+    private readonly firebaseService: FirebaseService,
     private readonly biometricService: BiometricService,
     private readonly auditService: AuditService,
     private readonly configService: ConfigService,
+    private readonly storageService: StorageService,
   ) {}
+
+  async adminLogin(dto: AdminLoginDto) {
+    const user = await this.prisma.user.findFirst({
+      where: { email: dto.email, role: UserRole.ADMIN },
+    });
+
+    if (!user || !user.passwordHash) {
+      throw new UnauthorizedException('Invalid email or password');
+    }
+
+    const passwordValid = await bcrypt.compare(dto.password, user.passwordHash);
+    if (!passwordValid) {
+      throw new UnauthorizedException('Invalid email or password');
+    }
+
+    const accessToken = await this.buildAccessToken(user);
+    const refreshToken = await this.buildRefreshToken(user);
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: new Date() },
+    });
+
+    await this.auditService.log(user.id, 'ADMIN_LOGIN', 'user', user.id);
+
+    return {
+      accessToken,
+      refreshToken,
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        firstName: user.firstName,
+        lastName: user.lastName,
+      },
+    };
+  }
 
   async requestOtp(dto: RequestOtpDto) {
     await this.ensureRoleConsistency(dto.phoneNumber, dto.role);
-    const { expiresAt } = await this.otpService.requestOtp(dto.phoneNumber, dto.role);
+    const { expiresAt } = await this.otpService.requestOtp(dto.phoneNumber, dto.role, dto.debugMode);
     return {
       message: 'OTP sent if phone is valid',
       expiresAt,
@@ -39,28 +86,104 @@ export class AuthService {
   async verifyOtp(dto: VerifyOtpDto) {
     await this.ensureRoleConsistency(dto.phoneNumber, dto.role);
     await this.otpService.verifyOtp(dto);
+    return this.buildLoginResponse(dto.phoneNumber, dto.role);
+  }
 
-    const user = await this.findOrCreateUser(dto.phoneNumber, dto.role);
+  async verifyFirebaseToken(dto: VerifyFirebaseDto) {
+    const startTime = Date.now();
+    this.logger.log('[PERF] verifyFirebaseToken START');
+
+    try {
+      // Step 1: Verify Firebase token
+      const step1Start = Date.now();
+      const { phoneNumber } = await this.firebaseService.verifyIdToken(
+        dto.firebaseIdToken,
+      );
+      this.logger.log(
+        `[PERF] Firebase verifyIdToken took ${Date.now() - step1Start}ms`,
+      );
+
+      // Step 2: Role consistency
+      const step2Start = Date.now();
+      await this.ensureRoleConsistency(phoneNumber, dto.role);
+      this.logger.log(
+        `[PERF] ensureRoleConsistency took ${Date.now() - step2Start}ms`,
+      );
+
+      // Step 3: Build response
+      const step3Start = Date.now();
+      const result = await this.buildLoginResponse(phoneNumber, dto.role);
+      this.logger.log(
+        `[PERF] buildLoginResponse took ${Date.now() - step3Start}ms`,
+      );
+
+      this.logger.log(
+        `[PERF] verifyFirebaseToken TOTAL took ${Date.now() - startTime}ms`,
+      );
+      return result;
+    } catch (error) {
+      this.logger.error(
+        `[PERF] verifyFirebaseToken FAILED after ${Date.now() - startTime}ms`,
+        error,
+      );
+      throw error;
+    }
+  }
+
+  private async buildLoginResponse(phoneNumber: string, role: UserRole) {
+    // Step 1: Find or create user
+    const step1Start = Date.now();
+    const user = await this.findOrCreateUser(phoneNumber, role);
+    this.logger.log(`[PERF] findOrCreateUser took ${Date.now() - step1Start}ms`);
+
+    // Step 2: Update last login
+    const step2Start = Date.now();
     await this.prisma.user.update({
       where: { id: user.id },
       data: { lastLoginAt: new Date() },
     });
+    this.logger.log(`[PERF] update lastLoginAt took ${Date.now() - step2Start}ms`);
 
     if (user.role === UserRole.DRIVER) {
+      // Step 3: Ensure driver profile
+      const step3Start = Date.now();
       const driverProfile = await this.ensureDriverProfile(user.id);
+      this.logger.log(`[PERF] ensureDriverProfile took ${Date.now() - step3Start}ms`);
+
       const hasProfilePhoto = !!driverProfile.profilePhotoKey;
+
+      // Step 4: Build biometric token if needed
+      const step4Start = Date.now();
       const biometricToken = hasProfilePhoto
         ? await this.buildBiometricToken(user, driverProfile.id)
         : null;
+      if (hasProfilePhoto) {
+        this.logger.log(`[PERF] buildBiometricToken took ${Date.now() - step4Start}ms`);
+      }
 
       // Drivers with profile photo need biometric first — no refresh token yet
       // Drivers without profile photo get access + refresh tokens immediately
+      const step5Start = Date.now();
       const refreshToken = hasProfilePhoto
         ? null
         : await this.buildRefreshToken(user);
+      if (!hasProfilePhoto) {
+        this.logger.log(`[PERF] buildRefreshToken took ${Date.now() - step5Start}ms`);
+      }
+
+      const step6Start = Date.now();
+      const accessToken = hasProfilePhoto ? null : await this.buildAccessToken(user);
+      if (!hasProfilePhoto) {
+        this.logger.log(`[PERF] buildAccessToken took ${Date.now() - step6Start}ms`);
+      }
+
+      const driverIsProfileComplete = !!(
+        user.firstName && user.lastName &&
+        driverProfile.licenseNumber && driverProfile.licenseExpiryDate
+      );
 
       return {
-        accessToken: hasProfilePhoto ? null : await this.buildAccessToken(user),
+        accessToken,
         refreshToken,
         user: {
           id: user.id,
@@ -68,6 +191,9 @@ export class AuthService {
           role: user.role,
           isActive: user.isActive,
           createdAt: user.createdAt?.toISOString(),
+          firstName: user.firstName ?? null,
+          lastName: user.lastName ?? null,
+          isProfileComplete: driverIsProfileComplete,
         },
         // Driver-specific fields
         biometricRequired: hasProfilePhoto,
@@ -78,15 +204,31 @@ export class AuthService {
     }
 
     // Riders get access + refresh tokens
+    const step3Start = Date.now();
+    const accessToken = await this.buildAccessToken(user);
+    this.logger.log(`[PERF] buildAccessToken (rider) took ${Date.now() - step3Start}ms`);
+
+    const step4Start = Date.now();
+    const refreshToken = await this.buildRefreshToken(user);
+    this.logger.log(`[PERF] buildRefreshToken (rider) took ${Date.now() - step4Start}ms`);
+
+    const riderIsProfileComplete = !!(
+      (user as any).firstName && (user as any).lastName &&
+      (user as any).age && (user as any).address
+    );
+
     return {
-      accessToken: await this.buildAccessToken(user),
-      refreshToken: await this.buildRefreshToken(user),
+      accessToken,
+      refreshToken,
       user: {
         id: user.id,
         phoneNumber: user.phoneNumber,
         role: user.role,
         isActive: user.isActive,
         createdAt: user.createdAt?.toISOString(),
+        firstName: (user as any).firstName ?? null,
+        lastName: (user as any).lastName ?? null,
+        isProfileComplete: riderIsProfileComplete,
       },
     };
   }
@@ -200,7 +342,93 @@ export class AuthService {
       throw new UnauthorizedException('User not found');
     }
 
-    return found;
+    let isProfileComplete: boolean;
+    if (found.role === UserRole.DRIVER) {
+      isProfileComplete = !!(
+        found.firstName && found.lastName &&
+        (found as any).driverProfile?.licenseNumber &&
+        (found as any).driverProfile?.licenseExpiryDate
+      );
+    } else {
+      isProfileComplete = !!(
+        found.firstName && found.lastName &&
+        (found as any).age && (found as any).address
+      );
+    }
+
+    // Sanitize sensitive fields
+    const { passwordHash, phoneNumberHash, emailHash, ...safeUser } = found as any;
+
+    // Resolve profile photo URL if it's an R2 storage key
+    let profilePhotoUrl = safeUser.profilePhotoUrl;
+    if (profilePhotoUrl && !profilePhotoUrl.startsWith('http')) {
+      try {
+        profilePhotoUrl = await this.storageService.getDownloadUrl(profilePhotoUrl);
+      } catch {
+        profilePhotoUrl = null;
+      }
+    }
+
+    return { ...safeUser, profilePhotoUrl, isProfileComplete };
+  }
+
+  async updateRiderProfile(userId: string, dto: { firstName?: string; lastName?: string; age?: number; address?: string }) {
+    // Build update object from only provided fields
+    const data: Record<string, any> = {};
+    if (dto.firstName !== undefined) data.firstName = dto.firstName;
+    if (dto.lastName !== undefined) data.lastName = dto.lastName;
+    if (dto.age !== undefined) data.age = dto.age;
+    if (dto.address !== undefined) data.address = dto.address;
+
+    if (Object.keys(data).length === 0) {
+      throw new BadRequestException('No fields to update');
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: data as any,
+    });
+
+    const isProfileComplete = !!(
+      updated.firstName && updated.lastName &&
+      (updated as any).age && (updated as any).address
+    );
+
+    return {
+      firstName: updated.firstName,
+      lastName: updated.lastName,
+      age: (updated as any).age,
+      address: (updated as any).address,
+      isProfileComplete,
+    };
+  }
+
+  async uploadProfilePhoto(userId: string, imageBase64: string) {
+    const buffer = Buffer.from(imageBase64, 'base64');
+    const key = `profile-photos/${userId}/${Date.now()}.jpg`;
+    await this.storageService.putBuffer(key, buffer, 'image/jpeg');
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { profilePhotoUrl: key } as any,
+    });
+    const downloadUrl = await this.storageService.getDownloadUrl(key);
+    return { profilePhotoUrl: downloadUrl };
+  }
+
+  async deleteAccount(userId: string) {
+    await this.prisma.$transaction([
+      this.prisma.refreshToken.deleteMany({ where: { userId } }),
+      this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          isActive: false,
+          isSuspended: true,
+          suspensionReason: 'Account deleted by user',
+          suspendedAt: new Date(),
+        },
+      }),
+    ]);
+    return { deleted: true };
   }
 
   private async findOrCreateUser(phoneNumber: string, role: UserRole): Promise<User> {
@@ -229,6 +457,10 @@ export class AuthService {
                   status: DriverStatus.PENDING,
                 },
               }
+            : undefined,
+        riderProfile:
+          role === UserRole.RIDER
+            ? { create: {} }
             : undefined,
       },
     });

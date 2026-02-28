@@ -23,7 +23,8 @@ enum class UserRole {
 @JsonClass(generateAdapter = true)
 data class RequestOtpRequest(
     @Json(name = "phoneNumber") val phoneNumber: String,
-    @Json(name = "role") val role: String
+    @Json(name = "role") val role: String,
+    @Json(name = "debugMode") val debugMode: Boolean? = null
 )
 
 /**
@@ -33,6 +34,20 @@ data class RequestOtpRequest(
 data class RequestOtpResponse(
     @Json(name = "message") val message: String,
     @Json(name = "expiresIn") val expiresIn: Int? = null // seconds
+)
+
+// ==========================================
+// Verify Firebase (real phone OTP via Firebase Phone Auth)
+// ==========================================
+
+/**
+ * Request to verify Firebase Phone Auth token
+ * POST /auth/verify-firebase
+ */
+@JsonClass(generateAdapter = true)
+data class VerifyFirebaseRequest(
+    @Json(name = "firebaseIdToken") val firebaseIdToken: String,
+    @Json(name = "role") val role: String
 )
 
 // ==========================================
@@ -79,7 +94,10 @@ data class UserDto(
     @Json(name = "phoneNumber") val phoneNumber: String,
     @Json(name = "role") val role: String,
     @Json(name = "isActive") val isActive: Boolean = true,
-    @Json(name = "createdAt") val createdAt: String? = null
+    @Json(name = "createdAt") val createdAt: String? = null,
+    @Json(name = "firstName") val firstName: String? = null,
+    @Json(name = "lastName") val lastName: String? = null,
+    @Json(name = "isProfileComplete") val isProfileComplete: Boolean = false
 )
 
 // ==========================================

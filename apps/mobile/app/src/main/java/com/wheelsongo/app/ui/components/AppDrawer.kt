@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.DirectionsCar
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
@@ -26,6 +28,8 @@ fun AppDrawer(
     userRole: String?,
     phoneNumber: String?,
     onMyDocuments: () -> Unit = {},
+    onMyVehicles: () -> Unit = {},
+    onSettings: () -> Unit = {},
     onLogout: () -> Unit
 ) {
     ModalDrawerSheet {
@@ -66,6 +70,17 @@ fun AppDrawer(
         HorizontalDivider()
         Spacer(modifier = Modifier.height(8.dp))
 
+        // My Vehicles — only for riders
+        if (userRole == "RIDER") {
+            NavigationDrawerItem(
+                icon = { Icon(Icons.Default.DirectionsCar, contentDescription = null) },
+                label = { Text("My Vehicles") },
+                selected = false,
+                onClick = onMyVehicles,
+                modifier = Modifier.padding(horizontal = 12.dp)
+            )
+        }
+
         // My Documents — only for drivers
         if (userRole == "DRIVER") {
             NavigationDrawerItem(
@@ -76,6 +91,15 @@ fun AppDrawer(
                 modifier = Modifier.padding(horizontal = 12.dp)
             )
         }
+
+        // Settings — both roles
+        NavigationDrawerItem(
+            icon = { Icon(Icons.Default.Settings, contentDescription = null) },
+            label = { Text("Settings") },
+            selected = false,
+            onClick = onSettings,
+            modifier = Modifier.padding(horizontal = 12.dp)
+        )
 
         // Logout
         NavigationDrawerItem(

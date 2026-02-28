@@ -9,7 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AuditAction } from '../audit/audit.constants';
 import { LocationService } from '../location/location.service';
-import { RideStatus, RideType, UserRole } from '@prisma/client';
+import { RideStatus, RideType, SosIncidentType, UserRole } from '@prisma/client';
 import {
   CreateRideDto,
   CreateRideResponseDto,
@@ -18,6 +18,7 @@ import {
   UpdateRideStatusDto,
   CancelRideDto,
   RideResponseDto,
+  TriggerSosDto,
 } from './dto';
 
 /**
@@ -64,10 +65,40 @@ export class RideService {
       throw new BadRequestException('Rider profile not found');
     }
 
+    // Enforce profile completion before booking
+    const riderUser = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { firstName: true, lastName: true, age: true, address: true } as any,
+    });
+    const riderUserAny = riderUser as any;
+    if (
+      !riderUserAny?.firstName ||
+      !riderUserAny?.lastName ||
+      !riderUserAny?.age ||
+      !riderUserAny?.address
+    ) {
+      throw new BadRequestException(
+        'Please complete your profile setup before booking a ride.',
+      );
+    }
+
     // Check for existing active ride
     const activeRide = await this.getActiveRide(userId);
     if (activeRide) {
       throw new BadRequestException('You already have an active ride');
+    }
+
+    // Validate rider vehicle if provided
+    if (dto.riderVehicleId) {
+      const riderVehicle = await this.prisma.riderVehicle.findUnique({
+        where: { id: dto.riderVehicleId },
+      });
+      if (!riderVehicle) {
+        throw new BadRequestException('Rider vehicle not found');
+      }
+      if (riderVehicle.riderProfileId !== riderProfile.id) {
+        throw new ForbiddenException('This vehicle does not belong to you');
+      }
     }
 
     // Get distance and fare estimate
@@ -114,6 +145,7 @@ export class RideService {
         promoDiscount: estimate.promoDiscount,
         totalFare: estimate.estimatedFare, // Required field
         paymentMethod: dto.paymentMethod,
+        riderVehicleId: dto.riderVehicleId || null,
         scheduledPickupTime: dto.scheduledPickupTime
           ? new Date(dto.scheduledPickupTime)
           : null,
@@ -345,7 +377,75 @@ export class RideService {
         break;
       case RideStatus.COMPLETED:
         updateData.completedAt = new Date();
-        // Calculate actual fare if needed
+
+        // Calculate actual ride metrics from GPS location history
+        try {
+          const rideData = await this.prisma.ride.findUnique({
+            where: { id: rideId },
+            select: {
+              driverProfileId: true,
+              startedAt: true,
+              baseFare: true,
+              costPerKm: true,
+              costPerMin: true,
+              surgePricing: true,
+              promoDiscount: true,
+              estimatedFare: true,
+            },
+          });
+
+          if (rideData?.driverProfileId && rideData?.startedAt) {
+            const locationHistory = await this.prisma.driverLocationHistory.findMany({
+              where: {
+                driverProfileId: rideData.driverProfileId,
+                recordedAt: {
+                  gte: rideData.startedAt,
+                  lte: new Date(),
+                },
+              },
+              orderBy: { recordedAt: 'asc' },
+            });
+
+            if (locationHistory.length >= 2) {
+              let actualDistanceKm = 0;
+              for (let i = 1; i < locationHistory.length; i++) {
+                actualDistanceKm += this.locationService.calculateHaversineDistance(
+                  Number(locationHistory[i - 1].latitude),
+                  Number(locationHistory[i - 1].longitude),
+                  Number(locationHistory[i].latitude),
+                  Number(locationHistory[i].longitude),
+                );
+              }
+
+              const actualDistanceMeters = Math.round(actualDistanceKm * 1000);
+              const actualDurationSeconds = Math.round(
+                (new Date().getTime() - rideData.startedAt.getTime()) / 1000,
+              );
+
+              const baseFare = Number(rideData.baseFare);
+              const costPerKm = Number(rideData.costPerKm);
+              const costPerMin = Number(rideData.costPerMin);
+              const surgePricing = Number(rideData.surgePricing || 0);
+              const promoDiscount = Number(rideData.promoDiscount || 0);
+
+              let actualFare = baseFare + (actualDistanceKm * costPerKm) +
+                ((actualDurationSeconds / 60) * costPerMin) + surgePricing - promoDiscount;
+              const estimatedFareNum = Number(rideData.estimatedFare) || PRICING_CONFIG.minimumFare;
+              actualFare = Math.max(actualFare, estimatedFareNum);
+              actualFare = Math.round(actualFare);
+
+              updateData.actualDistance = actualDistanceMeters;
+              updateData.actualDuration = actualDurationSeconds;
+              updateData.totalFare = actualFare;
+
+              this.logger.log(
+                `Ride ${rideId} completed: ${actualDistanceKm.toFixed(1)}km, ${Math.round(actualDurationSeconds / 60)}min, PHP${actualFare}`,
+              );
+            }
+          }
+        } catch (error) {
+          this.logger.error(`Failed to calculate actual ride data for ${rideId}: ${error.message}`);
+        }
         break;
     }
 
@@ -446,34 +546,130 @@ export class RideService {
   }
 
   /**
-   * Get surge multiplier for a location (placeholder - implement based on demand)
+   * Get surge multiplier based on local demand/supply ratio
    */
   private async getSurgeMultiplier(
     latitude: number,
     longitude: number,
   ): Promise<number> {
-    // TODO: Implement actual surge pricing based on:
-    // - Number of active ride requests in the area
-    // - Number of available drivers in the area
-    // - Time of day
-    // - Events/weather
+    const SURGE_RADIUS_KM = 3;
+    const SUPPLY_RADIUS_KM = 5;
+    const MAX_SURGE = 2.0;
+    const DEMAND_WINDOW_MINUTES = 15;
 
-    // For now, return no surge
-    return 1.0;
+    const demandSince = new Date(
+      Date.now() - DEMAND_WINDOW_MINUTES * 60 * 1000,
+    );
+
+    // Count recent PENDING rides in the area (demand)
+    const allPendingRides = await this.prisma.ride.findMany({
+      where: {
+        status: RideStatus.PENDING,
+        createdAt: { gte: demandSince },
+      },
+      select: { pickupLatitude: true, pickupLongitude: true },
+    });
+
+    const demandCount = allPendingRides.filter((r) => {
+      const dist = this.locationService.calculateHaversineDistance(
+        latitude,
+        longitude,
+        r.pickupLatitude,
+        r.pickupLongitude,
+      );
+      return dist <= SURGE_RADIUS_KM;
+    }).length;
+
+    // Count available drivers in the area (supply)
+    const allOnlineDrivers = await this.prisma.driverProfile.findMany({
+      where: {
+        isOnline: true,
+        status: 'APPROVED',
+        currentLatitude: { not: null },
+        currentLongitude: { not: null },
+      },
+      select: { currentLatitude: true, currentLongitude: true },
+    });
+
+    const supplyCount = allOnlineDrivers.filter((d) => {
+      const dist = this.locationService.calculateHaversineDistance(
+        latitude,
+        longitude,
+        d.currentLatitude!,
+        d.currentLongitude!,
+      );
+      return dist <= SUPPLY_RADIUS_KM;
+    }).length;
+
+    // Calculate surge multiplier from demand/supply ratio
+    const ratio = demandCount / Math.max(supplyCount, 1);
+    let multiplier = 1.0;
+    if (ratio >= 3.0) multiplier = 2.0;
+    else if (ratio >= 2.0) multiplier = 1.5;
+    else if (ratio >= 1.0) multiplier = 1.25;
+
+    multiplier = Math.min(multiplier, MAX_SURGE);
+
+    // Log to SurgePricingLog
+    await this.prisma.surgePricingLog.create({
+      data: {
+        latitude,
+        longitude,
+        radius: SURGE_RADIUS_KM,
+        surgeMultiplier: multiplier,
+        activeRideCount: demandCount,
+        availableDriverCount: supplyCount,
+      },
+    });
+
+    return multiplier;
   }
 
   /**
-   * Calculate promo discount
+   * Calculate promo discount using PromoCode and UserPromoUsage tables
    */
   private async calculatePromoDiscount(
     promoCode: string,
     subtotal: number,
   ): Promise<number> {
-    // TODO: Implement promo code validation and discount calculation
-    // using PromoCode and UserPromoUsage tables
+    const promo = await this.prisma.promoCode.findUnique({
+      where: { code: promoCode },
+    });
 
-    // For now, return no discount
-    return 0;
+    if (!promo) return 0;
+    if (!promo.isActive) return 0;
+
+    const now = new Date();
+    if (now < promo.validFrom || now > promo.validUntil) return 0;
+
+    // Check max usage count
+    if (promo.maxUsageCount && promo.currentUsageCount >= promo.maxUsageCount) {
+      return 0;
+    }
+
+    // Check minimum fare requirement
+    if (promo.minRideFare && subtotal < promo.minRideFare.toNumber()) {
+      return 0;
+    }
+
+    // Calculate discount
+    let discount = 0;
+    if (promo.discountType === 'PERCENTAGE') {
+      discount = subtotal * (promo.discountValue.toNumber() / 100);
+    } else {
+      // FIXED_AMOUNT
+      discount = promo.discountValue.toNumber();
+    }
+
+    // Cap at max discount
+    if (promo.maxDiscount) {
+      discount = Math.min(discount, promo.maxDiscount.toNumber());
+    }
+
+    // Cap at subtotal (can't have negative fare)
+    discount = Math.min(discount, subtotal);
+
+    return discount;
   }
 
   /**
@@ -544,7 +740,7 @@ export class RideService {
       estimatedFare: ride.estimatedFare?.toNumber?.() || ride.estimatedFare,
       actualDistance: ride.actualDistance,
       actualDuration: ride.actualDuration,
-      actualFare: ride.actualFare?.toNumber?.() || ride.actualFare,
+      actualFare: ride.totalFare?.toNumber?.() || ride.totalFare,
       baseFare: ride.baseFare?.toNumber?.() || ride.baseFare,
       costPerKm: ride.costPerKm?.toNumber?.() || ride.costPerKm,
       costPerMin: ride.costPerMin?.toNumber?.() || ride.costPerMin,
@@ -585,6 +781,47 @@ export class RideService {
             phoneNumber: ride.rider.phoneNumber,
           }
         : undefined,
+    };
+  }
+
+  /**
+   * Trigger SOS emergency for an active ride.
+   * Creates a SosIncident record and logs the event.
+   */
+  async triggerSos(rideId: string, userId: string, dto: TriggerSosDto) {
+    const ride = await this.prisma.ride.findUnique({
+      where: { id: rideId },
+    });
+
+    if (!ride) {
+      throw new NotFoundException('Ride not found');
+    }
+
+    if (ride.riderId !== userId && ride.driverId !== userId) {
+      throw new ForbiddenException('You are not a participant of this ride');
+    }
+
+    const sos = await this.prisma.sosIncident.create({
+      data: {
+        userId,
+        rideId,
+        latitude: dto.latitude,
+        longitude: dto.longitude,
+        description: dto.description,
+        incidentType: dto.incidentType || SosIncidentType.EMERGENCY,
+        status: 'ACTIVE',
+      },
+    });
+
+    this.logger.warn(
+      `SOS triggered by user ${userId} for ride ${rideId} at ${dto.latitude},${dto.longitude}`,
+    );
+
+    return {
+      id: sos.id,
+      rideId: sos.rideId,
+      status: sos.status,
+      createdAt: sos.createdAt,
     };
   }
 }

@@ -3,10 +3,16 @@ import { DriverService } from '../src/driver/driver.service';
 import { AuditService } from '../src/audit/audit.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { StorageService } from '../src/storage/storage.service';
+import { LocationService } from '../src/location/location.service';
+import { FatigueService } from '../src/fatigue/fatigue.service';
 import { DriverStatus, DocumentStatus, DriverDocumentType } from '@prisma/client';
 
 const prismaMock = () =>
   ({
+    user: {
+      findUnique: jest.fn(),
+      update: jest.fn(),
+    },
     driverProfile: {
       findUnique: jest.fn(),
       findMany: jest.fn(),
@@ -25,6 +31,8 @@ describe('DriverService', () => {
   let prisma: PrismaService;
   let storage: StorageService;
   let audit: AuditService;
+  let location: LocationService;
+  let fatigue: FatigueService;
 
   beforeEach(() => {
     prisma = prismaMock();
@@ -32,7 +40,15 @@ describe('DriverService', () => {
       getUploadUrl: jest.fn().mockResolvedValue('https://presigned.example.com/upload'),
     } as unknown as StorageService;
     audit = { log: jest.fn() } as unknown as AuditService;
-    service = new DriverService(prisma, storage, audit);
+    location = {
+      getDistanceMatrix: jest.fn().mockResolvedValue({ distanceKm: 5, durationSeconds: 600, distanceMeters: 5000 }),
+    } as unknown as LocationService;
+    fatigue = {
+      canGoOnline: jest.fn().mockResolvedValue({ allowed: true }),
+      checkFatigue: jest.fn(),
+      enrollFace: jest.fn(),
+    } as unknown as FatigueService;
+    service = new DriverService(prisma, storage, audit, location, fatigue);
   });
 
   describe('requestKycUpload()', () => {
@@ -213,10 +229,18 @@ describe('DriverService', () => {
 
   describe('status transitions', () => {
     it('approves a pending driver', async () => {
-      (prisma.driverProfile.findUnique as jest.Mock).mockResolvedValue({
-        id: 'driver-1',
-        status: DriverStatus.PENDING,
-      });
+      (prisma.driverProfile.findUnique as jest.Mock)
+        .mockResolvedValueOnce({
+          id: 'driver-1',
+          status: DriverStatus.PENDING,
+        })
+        .mockResolvedValueOnce({
+          id: 'driver-1',
+          status: DriverStatus.APPROVED,
+          documents: [],
+          user: { id: 'user-1', phoneNumber: '+639000000001' },
+          vehicle: null,
+        });
       (prisma.driverProfile.update as jest.Mock).mockResolvedValue({
         id: 'driver-1',
         status: DriverStatus.APPROVED,
@@ -227,10 +251,19 @@ describe('DriverService', () => {
     });
 
     it('rejects a driver with reason', async () => {
-      (prisma.driverProfile.findUnique as jest.Mock).mockResolvedValue({
-        id: 'driver-2',
-        status: DriverStatus.PENDING,
-      });
+      (prisma.driverProfile.findUnique as jest.Mock)
+        .mockResolvedValueOnce({
+          id: 'driver-2',
+          status: DriverStatus.PENDING,
+        })
+        .mockResolvedValueOnce({
+          id: 'driver-2',
+          status: DriverStatus.REJECTED,
+          rejectionReason: 'Invalid docs',
+          documents: [],
+          user: { id: 'user-2', phoneNumber: '+639000000002' },
+          vehicle: null,
+        });
       (prisma.driverProfile.update as jest.Mock).mockResolvedValue({
         id: 'driver-2',
         status: DriverStatus.REJECTED,
@@ -256,6 +289,112 @@ describe('DriverService', () => {
       await expect(
         service.rejectDriver('nonexistent', 'admin-1', 'reason'),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('setupDriverProfile()', () => {
+    const userId = 'user-1';
+    const dto = {
+      firstName: 'Juan',
+      lastName: 'Cruz',
+      licenseNumber: 'N12-34-567890',
+      licenseExpiryDate: '2028-12-31T00:00:00.000Z',
+    };
+
+    beforeEach(() => {
+      (prisma.user.update as jest.Mock).mockResolvedValue({});
+      (prisma.driverProfile.update as jest.Mock).mockResolvedValue({});
+    });
+
+    it('updates user firstName and lastName', async () => {
+      await service.setupDriverProfile(userId, dto);
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: userId },
+          data: expect.objectContaining({ firstName: 'Juan', lastName: 'Cruz' }),
+        }),
+      );
+    });
+
+    it('updates driverProfile licenseNumber and licenseExpiryDate', async () => {
+      await service.setupDriverProfile(userId, dto);
+      expect(prisma.driverProfile.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { userId },
+          data: expect.objectContaining({
+            licenseNumber: 'N12-34-567890',
+            licenseExpiryDate: expect.any(Date),
+          }),
+        }),
+      );
+    });
+
+    it('returns isProfileComplete: true', async () => {
+      const result = await service.setupDriverProfile(userId, dto);
+      expect(result.isProfileComplete).toBe(true);
+      expect(result.firstName).toBe('Juan');
+      expect(result.licenseNumber).toBe('N12-34-567890');
+    });
+  });
+
+  describe('updateOnlineStatus() — profile gate', () => {
+    const userId = 'user-1';
+    const profileId = 'profile-1';
+
+    beforeEach(() => {
+      (prisma.driverProfile.findUnique as jest.Mock).mockResolvedValue({
+        id: profileId,
+        userId,
+      });
+      (prisma.driverProfile.update as jest.Mock).mockResolvedValue({
+        id: profileId,
+        isOnline: true,
+      });
+    });
+
+    it('throws BadRequestException when going online with incomplete profile', async () => {
+      // findUnique for ensureProfile (first call)
+      // then two parallel findUnique calls for user + driverProfile profile gate
+      (prisma.driverProfile.findUnique as jest.Mock)
+        .mockResolvedValueOnce({ id: profileId, userId }) // ensureProfile
+        .mockResolvedValueOnce({ licenseNumber: null, licenseExpiryDate: null }); // profile gate driverProfile
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue({
+        firstName: null,
+        lastName: null,
+      });
+
+      await expect(
+        service.updateOnlineStatus(userId, { isOnline: true }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('allows going online when profile is complete', async () => {
+      (prisma.driverProfile.findUnique as jest.Mock)
+        .mockResolvedValueOnce({ id: profileId, userId }) // ensureProfile
+        .mockResolvedValueOnce({ licenseNumber: 'LIC-001', licenseExpiryDate: new Date('2028-01-01') }); // profile gate
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue({
+        firstName: 'Juan',
+        lastName: 'Cruz',
+      });
+
+      const result = await service.updateOnlineStatus(userId, { isOnline: true });
+      expect(result.isOnline).toBe(true);
+    });
+
+    it('skips gate when going offline', async () => {
+      // Only one findUnique call (ensureProfile) — no gate for going offline
+      (prisma.driverProfile.findUnique as jest.Mock).mockResolvedValue({
+        id: profileId,
+        userId,
+      });
+      (prisma.driverProfile.update as jest.Mock).mockResolvedValue({
+        id: profileId,
+        isOnline: false,
+      });
+
+      const result = await service.updateOnlineStatus(userId, { isOnline: false });
+      expect(result.isOnline).toBe(false);
+      expect(prisma.user.findUnique).not.toHaveBeenCalled();
     });
   });
 });

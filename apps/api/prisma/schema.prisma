@@ -208,8 +208,11 @@ model User {
 
   firstName        String?
   lastName         String?
+  age              Int?
+  address          String?
   email            String?   @unique
   emailHash        String?  @unique // HMAC-SHA256 hash for encrypted email lookup
+  passwordHash     String?           // bcrypt hash for admin email/password login
   profilePhotoUrl  String?
   isActive         Boolean   @default(true)
   isSuspended      Boolean   @default(false)
@@ -289,6 +292,15 @@ model DriverProfile {
   profilePhotoKey        String?
   profilePhotoUploadedAt DateTime?
   biometricVerifiedAt    DateTime?
+
+  // Face enrollment for fatigue detection
+  faceEnrolledAt       DateTime?
+  enrolledFaceKey      String?
+
+  // Fatigue detection gating
+  lastFatigueCheckAt   DateTime?
+  lastFatigueLevel     FatigueLevel?
+  fatigueCooldownUntil DateTime?
 
   licenseNumber            String?   @unique
   licenseExpiryDate        DateTime?
@@ -405,6 +417,7 @@ model RiderProfile {
   emergencyContacts EmergencyContact[]
   savedLocations    SavedLocation[]
   preferences       RiderPreference?
+  riderVehicles     RiderVehicle[]
 }
 
 model EmergencyContact {
@@ -463,6 +476,32 @@ model RiderPreference {
   updatedAt DateTime @updatedAt
 }
 
+model RiderVehicle {
+  id             String       @id @default(uuid())
+  riderProfileId String
+  riderProfile   RiderProfile @relation(fields: [riderProfileId], references: [id], onDelete: Cascade)
+
+  make        String
+  model       String
+  year        Int
+  color       String
+  plateNumber String      @unique
+  vehicleType VehicleType @default(SEDAN)
+
+  isDefault Boolean @default(false)
+
+  orStorageKey String?
+  crStorageKey String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  rides Ride[]
+
+  @@index([riderProfileId, isDefault])
+  @@index([plateNumber])
+}
+
 // ============================================
 // BOOKING & RIDE DOMAIN
 // ============================================
@@ -518,8 +557,10 @@ model Ride {
   promoCode   PromoCode? @relation(fields: [promoCodeId], references: [id])
 
   vehicleId               String?
-  vehicle                 Vehicle? @relation(fields: [vehicleId], references: [id])
-  driverSearchRadius      Float    @default(5.0)
+  vehicle                 Vehicle?      @relation(fields: [vehicleId], references: [id])
+  riderVehicleId          String?
+  riderVehicle            RiderVehicle? @relation(fields: [riderVehicleId], references: [id])
+  driverSearchRadius      Float         @default(5.0)
   maxDriverSearchAttempts Int      @default(10)
   driverSearchAttempts    Int      @default(0)
 
@@ -681,6 +722,11 @@ model FatigueDetectionLog {
 
   isOnRide      Boolean @default(false)
   currentRideId String?
+
+  geminiRawResponse String? @db.Text
+  confidence        Float?
+  reasons           String[]
+  cooldownMinutes   Int?
 
   detectedAt DateTime @default(now())
 

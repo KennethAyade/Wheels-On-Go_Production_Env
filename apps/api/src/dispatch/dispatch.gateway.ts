@@ -58,7 +58,7 @@ export class DispatchGateway implements OnGatewayConnection, OnGatewayDisconnect
         secret: this.configService.get<string>('JWT_SECRET'),
       });
 
-      const userId = payload.userId;
+      const userId = payload.sub;
 
       // Store mappings
       this.userSocketMap.set(userId, client.id);
@@ -72,10 +72,12 @@ export class DispatchGateway implements OnGatewayConnection, OnGatewayDisconnect
       // Check for pending dispatch if driver
       const pendingDispatch = await this.dispatchService.getPendingDispatchForDriver(userId);
       if (pendingDispatch) {
-        // Send pending dispatch to newly connected driver
+        // Fetch full ride with rider info for normalized dispatch payload
+        const fullRide = await this.fetchFullRide(pendingDispatch.rideId);
+        const rideData = fullRide ? this.buildRideData(fullRide) : { id: pendingDispatch.rideId };
         client.emit('dispatch:request', {
           dispatchAttemptId: pendingDispatch.id,
-          ride: pendingDispatch.ride,
+          ride: rideData,
         });
       }
     } catch (error) {
@@ -118,16 +120,20 @@ export class DispatchGateway implements OnGatewayConnection, OnGatewayDisconnect
         true,
       );
 
+      // Normalize ride data for mobile-compatible flat structure
+      const fullRide = await this.fetchFullRide(result.ride.id);
+      const rideData = fullRide ? this.buildRideData(fullRide) : { id: result.ride.id };
+
       // Notify driver of acceptance confirmation
       client.emit('dispatch:accepted', {
-        ride: result.ride,
+        ride: rideData,
       });
 
       // Notify rider that driver has been assigned
-      const riderId = result.ride?.rider?.userId;
+      const riderId = result.ride?.riderId;
       if (riderId) {
         this.server.to(`user:${riderId}`).emit('ride:driver_assigned', {
-          ride: result.ride,
+          ride: rideData,
         });
       }
 
@@ -165,13 +171,16 @@ export class DispatchGateway implements OnGatewayConnection, OnGatewayDisconnect
         dispatchAttemptId: data.dispatchAttemptId,
       });
 
-      // If next dispatch was sent, notify that driver
+      // If next dispatch was sent, notify that driver with full ride data
       if (result.nextDispatchAttempt) {
         const nextDriverUserId = result.nextDispatchAttempt.driver?.userId;
         if (nextDriverUserId) {
+          const nextRideId = result.nextDispatchAttempt.dispatchAttempt.rideId;
+          const fullRide = await this.fetchFullRide(nextRideId);
+          const rideData = fullRide ? this.buildRideData(fullRide) : { id: nextRideId };
           this.server.to(`user:${nextDriverUserId}`).emit('dispatch:request', {
             dispatchAttemptId: result.nextDispatchAttempt.dispatchAttempt.id,
-            ride: result.nextDispatchAttempt.dispatchAttempt.ride,
+            ride: rideData,
           });
         }
       }
@@ -199,6 +208,40 @@ export class DispatchGateway implements OnGatewayConnection, OnGatewayDisconnect
   }
 
   /**
+   * Fetch a ride with full rider info for dispatch notifications
+   */
+  private async fetchFullRide(rideId: string): Promise<any> {
+    return this.dispatchService['prisma'].ride.findUnique({
+      where: { id: rideId },
+      include: {
+        rider: { select: { id: true, firstName: true, lastName: true, phoneNumber: true } },
+      },
+    });
+  }
+
+  /**
+   * Normalize Prisma ride fields to mobile-compatible flat structure
+   */
+  private buildRideData(ride: any): Record<string, any> {
+    const firstName = ride.rider?.firstName ?? '';
+    const lastName = ride.rider?.lastName ?? '';
+    return {
+      id: ride.id,
+      riderName: `${firstName} ${lastName}`.trim() || 'Customer',
+      pickupAddress: ride.pickupAddress ?? '',
+      dropoffAddress: ride.dropoffAddress ?? '',
+      pickupLat: ride.pickupLatitude ?? 0,
+      pickupLng: ride.pickupLongitude ?? 0,
+      estimatedFare: ride.estimatedFare ?? 0,
+      estimatedDistance: ride.estimatedDistance ?? 0,
+      estimatedDuration: ride.estimatedDuration ?? 0,
+      paymentMethod: ride.paymentMethod ?? 'CASH',
+      rideType: ride.rideType ?? 'NOW',
+      status: ride.status,
+    };
+  }
+
+  /**
    * Notify rider of ride status change
    */
   notifyRider(riderUserId: string, event: string, data: any): void {
@@ -212,6 +255,91 @@ export class DispatchGateway implements OnGatewayConnection, OnGatewayDisconnect
   notifyDriver(driverUserId: string, event: string, data: any): void {
     this.server.to(`user:${driverUserId}`).emit(event, data);
     this.logger.log(`Notification sent to driver ${driverUserId}: ${event}`);
+  }
+
+  /**
+   * Notify a specific driver selected by the rider.
+   * Creates a dispatch attempt and sends WebSocket event to that driver only.
+   */
+  async notifySelectedDriver(rideId: string, selectedDriverProfileId: string): Promise<void> {
+    try {
+      // Get the driver profile to find userId
+      const driverProfile = await this.dispatchService['prisma'].driverProfile.findUnique({
+        where: { id: selectedDriverProfileId },
+      });
+
+      if (!driverProfile) {
+        this.logger.warn(`Selected driver profile ${selectedDriverProfileId} not found`);
+        return;
+      }
+
+      // Create a dispatch attempt for tracking
+      const dispatchAttempt = await this.dispatchService['prisma'].dispatchAttempt.create({
+        data: {
+          rideId,
+          driverProfileId: selectedDriverProfileId,
+          driverLatitude: driverProfile.currentLatitude ?? 0,
+          driverLongitude: driverProfile.currentLongitude ?? 0,
+          distanceToPickup: 0,
+          sentAt: new Date(),
+        },
+      });
+
+      // Fetch full ride with rider info and send normalized data to driver
+      const fullRide = await this.fetchFullRide(rideId);
+      const rideData = fullRide ? this.buildRideData(fullRide) : { id: rideId };
+      this.sendDispatchToDriver(driverProfile.userId, dispatchAttempt.id, rideData);
+
+      // Notify rider that request was sent
+      const ride = await this.dispatchService.getRideForNotification(rideId);
+      if (ride) {
+        this.notifyRider(ride.riderId, 'dispatch:status', {
+          status: 'WAITING_FOR_DRIVER',
+          rideId,
+        });
+      }
+
+      this.logger.log(`Selected driver ${selectedDriverProfileId} notified for ride ${rideId}`);
+    } catch (error) {
+      this.logger.error(`Error notifying selected driver for ride ${rideId}: ${error.message}`);
+    }
+  }
+
+  /**
+   * Initiate dispatch for a ride (called from RideController after ride creation)
+   * Finds nearest driver and sends dispatch request via WebSocket
+   */
+  async initiateDispatch(rideId: string): Promise<void> {
+    try {
+      const result = await this.dispatchService.dispatchRide(rideId);
+      if (result) {
+        const { dispatchAttempt, driver } = result;
+        // Fetch full ride with rider info and send normalized data to driver
+        const fullRide = await this.fetchFullRide(rideId);
+        const rideData = fullRide ? this.buildRideData(fullRide) : { id: rideId };
+        this.sendDispatchToDriver(driver.userId, dispatchAttempt.id, rideData);
+
+        // Notify rider that we're searching for a driver
+        const ride = await this.dispatchService.getRideForNotification(rideId);
+        if (ride) {
+          this.notifyRider(ride.riderId, 'dispatch:status', {
+            status: 'SEARCHING',
+            rideId,
+          });
+        }
+      } else {
+        // No drivers available — notify rider
+        const ride = await this.dispatchService.getRideForNotification(rideId);
+        if (ride) {
+          this.notifyRider(ride.riderId, 'dispatch:status', {
+            status: 'NO_DRIVERS',
+            rideId,
+          });
+        }
+      }
+    } catch (error) {
+      this.logger.error(`Error initiating dispatch for ride ${rideId}: ${error.message}`);
+    }
   }
 
   /**

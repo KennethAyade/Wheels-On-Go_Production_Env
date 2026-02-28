@@ -14,9 +14,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.Row
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DrawerValue
@@ -30,6 +34,7 @@ import androidx.compose.material3.Snackbar
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -64,10 +69,22 @@ fun HomeScreen(
     drawerContent: @Composable () -> Unit = {},
     onFromFieldClick: () -> Unit = {},
     onToFieldClick: () -> Unit = {},
+    onConfirmBooking: () -> Unit = {},
+    onNavigateToActiveRide: (String) -> Unit = {},
+    onNavigateToProfileSetup: () -> Unit = {},
+    isProfileComplete: Boolean = true,
     modifier: Modifier = Modifier,
     viewModel: HomeViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+
+    // Auto-navigate to active ride if one exists
+    LaunchedEffect(uiState.activeRideId) {
+        uiState.activeRideId?.let { rideId ->
+            viewModel.onActiveRideNavigated()
+            onNavigateToActiveRide(rideId)
+        }
+    }
 
     // Location permissions
     val locationPermissions = rememberMultiplePermissionsState(
@@ -114,6 +131,7 @@ fun HomeScreen(
             } else null,
             pickupLocation = uiState.pickupLocation,
             dropoffLocation = uiState.dropoffLocation,
+            routePoints = uiState.routePoints,
             onMapTap = { lat, lng ->
                 viewModel.onMapTap(lat, lng)
             }
@@ -175,6 +193,46 @@ fun HomeScreen(
             }
         }
 
+        // Profile incomplete banner
+        if (!isProfileComplete) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3CD)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .statusBarsPadding()
+                    .align(Alignment.TopCenter)
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = Color(0xFFFF9800),
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Column(modifier = Modifier
+                        .weight(1f)
+                        .padding(start = 8.dp)) {
+                        Text(
+                            "Profile Incomplete",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Text(
+                            "Complete your profile to book rides.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    TextButton(onClick = onNavigateToProfileSetup) {
+                        Text("Set Up", color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
+        }
+
         // Bottom Sheet - Search Fields
         BottomSearchSheet(
             fromAddress = uiState.fromAddress,
@@ -182,6 +240,8 @@ fun HomeScreen(
             onFromFieldClick = onFromFieldClick,
             onToFieldClick = onToFieldClick,
             onUsePinnedAddress = viewModel::onUsePinnedAddress,
+            canProceedToBooking = uiState.canProceedToBooking,
+            onConfirmBooking = onConfirmBooking,
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
@@ -216,6 +276,8 @@ private fun BottomSearchSheet(
     onFromFieldClick: () -> Unit,
     onToFieldClick: () -> Unit,
     onUsePinnedAddress: () -> Unit,
+    canProceedToBooking: Boolean = false,
+    onConfirmBooking: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -265,11 +327,19 @@ private fun BottomSearchSheet(
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // Use Pinned Address Button
-        PrimaryButton(
-            text = "Use pinned address",
-            onClick = onUsePinnedAddress
-        )
+        if (canProceedToBooking) {
+            // Confirm Booking Button — shown when both pickup and dropoff are set
+            PrimaryButton(
+                text = "Confirm Booking",
+                onClick = onConfirmBooking
+            )
+        } else {
+            // Use Pinned Address Button
+            PrimaryButton(
+                text = "Use pinned address",
+                onClick = onUsePinnedAddress
+            )
+        }
     }
 }
 

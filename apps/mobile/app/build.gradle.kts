@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.google.devtools.ksp") version "1.9.23-1.0.19"
+    id("com.google.gms.google-services")
 }
 
 android {
@@ -19,9 +20,14 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+
+        // Default API URL — points to Render deployment
+        buildConfigField("String", "API_BASE_URL", "\"https://wheels-on-go-dev-env.onrender.com/\"")
     }
 
     buildTypes {
+        debug {
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
@@ -52,6 +58,14 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
+
+    testOptions {
+        unitTests.all {
+            it.maxHeapSize = "2g"
+            it.forkEvery = 40
+            it.jvmArgs("-XX:+UseG1GC", "-XX:MaxMetaspaceSize=512m")
         }
     }
 }
@@ -96,6 +110,9 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
 
+    // Socket.IO Client (for real-time WebSocket communication)
+    implementation("io.socket:socket.io-client:2.1.1")
+
     // JSON - Moshi
     implementation("com.squareup.moshi:moshi-kotlin:1.15.0")
     ksp("com.squareup.moshi:moshi-kotlin-codegen:1.15.0")
@@ -106,9 +123,27 @@ dependencies {
     // Google Maps Platform
     implementation("com.google.android.gms:play-services-maps:18.2.0")
     implementation("com.google.maps.android:maps-compose:4.2.0")
+    implementation("com.google.maps.android:android-maps-utils:3.8.0")
 
     // Location Services (FREE - uses device GPS hardware)
     implementation("com.google.android.gms:play-services-location:21.1.0")
+
+    // Firebase (Phone Auth for real-phone OTP)
+    implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
+    implementation("com.google.firebase:firebase-auth")
+    // Firebase App Check (required for Phone Auth — Play Integrity verification)
+    // Note: correct artifact IDs use "appcheck" (no hyphen), NOT "app-check"
+    // Not in Firebase BOM — explicit versions required
+    // Both included so BuildConfig.DEBUG can select provider at runtime without compile errors
+    implementation("com.google.firebase:firebase-appcheck-debug:19.0.2")
+    implementation("com.google.firebase:firebase-appcheck-playintegrity:19.0.2")
+
+    // CameraX (embedded camera preview for face recognition screens)
+    val cameraxVersion = "1.3.1"
+    implementation("androidx.camera:camera-core:$cameraxVersion")
+    implementation("androidx.camera:camera-camera2:$cameraxVersion")
+    implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
+    implementation("androidx.camera:camera-view:$cameraxVersion")
 
     // Biometric (device fingerprint/face unlock for session resumption)
     implementation("androidx.biometric:biometric:1.1.0")
